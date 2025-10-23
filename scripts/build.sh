@@ -33,7 +33,7 @@ cat > "target/$NAME.driver/Contents/Info.plist" <<EOF
   <key>CFPlugInFactories</key>
     <dict>
         <key>$FACTORY_UUID</key>
-        <string>NullAudio_Create</string>
+        <string>SpaceBar_Create</string>
     </dict>
     <key>CFPlugInTypes</key>
     <dict>
@@ -50,7 +50,7 @@ cargo build -r
 
 clang -O3 -flto "src/$NAME.c" "target/release/lib$NAME.a" -isysroot $(xcrun --sdk macosx --show-sdk-path) \
     -bundle -framework CoreAudio -framework CoreFoundation \
-    -Wl,-exported_symbol,_NullAudio_Create \
+    -Wl,-exported_symbol,_SpaceBar_Create \
     -o "target/$NAME.driver/Contents/MacOS/$NAME"
 
 codesign --force --deep --options runtime --sign "$TEAM_ID" "target/$NAME.driver"
