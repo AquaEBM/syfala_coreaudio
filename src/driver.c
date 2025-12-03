@@ -30,9 +30,7 @@ static os_log_t global_log_handle = NULL;
 		{ inAction; }												\
 	}																\
 
-// Change me! (^w^)
 #define N_CHANNELS 16
-// Change me! (^w^) 
 #define SAMPLE_RATE 48000.0
 
 // A volume and mute control pair for each channel + a master pair
@@ -120,6 +118,8 @@ static inline Float32 linear_remap(
 	Float32 const y_start,
 	Float32 const y_len
 ) {
+	// FP equality check sry lol
+	if (x_len == 0.0f) return x_start;
 	return fmaf(x - x_start, y_len / x_len, y_start);
 }
 
@@ -146,79 +146,79 @@ static inline Boolean saturating_refcount_dec(_Atomic(UInt32)* const i) {
 }
 
 // forward declarations xD
-static HRESULT		SpaceBar_QueryInterface(void* inDriver, REFIID inUUID, LPVOID* outInterface);
-static ULONG		SpaceBar_AddRef(void* inDriver);
-static ULONG		SpaceBar_Release(void* inDriver);
-static OSStatus		SpaceBar_Initialize(AudioServerPlugInDriverRef inDriver, AudioServerPlugInHostRef inHost);
-static OSStatus		SpaceBar_CreateDevice(AudioServerPlugInDriverRef inDriver, CFDictionaryRef inDescription, const AudioServerPlugInClientInfo* inClientInfo, AudioObjectID* outDeviceObjectID);
-static OSStatus		SpaceBar_DestroyDevice(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID);
-static OSStatus		SpaceBar_AddDeviceClient(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, const AudioServerPlugInClientInfo* inClientInfo);
-static OSStatus		SpaceBar_RemoveDeviceClient(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, const AudioServerPlugInClientInfo* inClientInfo);
-static OSStatus		SpaceBar_PerformDeviceConfigurationChange(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, UInt64 inChangeAction, void* inChangeInfo);
-static OSStatus		SpaceBar_AbortDeviceConfigurationChange(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, UInt64 inChangeAction, void* inChangeInfo);
-static Boolean		SpaceBar_HasProperty(AudioServerPlugInDriverRef inDriver, AudioObjectID inObjectID, pid_t inClientProcessID, const AudioObjectPropertyAddress* inAddress);
-static OSStatus		SpaceBar_IsPropertySettable(AudioServerPlugInDriverRef inDriver, AudioObjectID inObjectID, pid_t inClientProcessID, const AudioObjectPropertyAddress* inAddress, Boolean* outIsSettable);
-static OSStatus		SpaceBar_GetPropertyDataSize(AudioServerPlugInDriverRef inDriver, AudioObjectID inObjectID, pid_t inClientProcessID, const AudioObjectPropertyAddress* inAddress, UInt32 inQualifierDataSize, const void* inQualifierData, UInt32* outDataSize);
-static OSStatus		SpaceBar_GetPropertyData(AudioServerPlugInDriverRef inDriver, AudioObjectID inObjectID, pid_t inClientProcessID, const AudioObjectPropertyAddress* inAddress, UInt32 inQualifierDataSize, const void* inQualifierData, UInt32 inDataSize, UInt32* outDataSize, void* outData);
-static OSStatus		SpaceBar_SetPropertyData(AudioServerPlugInDriverRef inDriver, AudioObjectID inObjectID, pid_t inClientProcessID, const AudioObjectPropertyAddress* inAddress, UInt32 inQualifierDataSize, const void* inQualifierData, UInt32 inDataSize, const void* inData);
-static OSStatus		SpaceBar_StartIO(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, UInt32 inClientID);
-static OSStatus		SpaceBar_StopIO(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, UInt32 inClientID);
-static OSStatus		SpaceBar_GetZeroTimeStamp(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, UInt32 inClientID, Float64* outSampleTime, UInt64* outHostTime, UInt64* outSeed);
-static OSStatus		SpaceBar_WillDoIOOperation(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, UInt32 inClientID, UInt32 inOperationID, Boolean* outWillDo, Boolean* outWillDoInPlace);
-static OSStatus		SpaceBar_BeginIOOperation(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, UInt32 inClientID, UInt32 inOperationID, UInt32 inIOBufferFrameSize, const AudioServerPlugInIOCycleInfo* inIOCycleInfo);
-static OSStatus		SpaceBar_DoIOOperation(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, AudioObjectID inStreamObjectID, UInt32 inClientID, UInt32 inOperationID, UInt32 inIOBufferFrameSize, const AudioServerPlugInIOCycleInfo* inIOCycleInfo, void* ioMainBuffer, void* ioSecondaryBuffer);
-static OSStatus		SpaceBar_EndIOOperation(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, UInt32 inClientID, UInt32 inOperationID, UInt32 inIOBufferFrameSize, const AudioServerPlugInIOCycleInfo* inIOCycleInfo);
+static HRESULT		syfala_query_interface(void* inDriver, REFIID inUUID, LPVOID* outInterface);
+static ULONG		syfala_add_ref(void* inDriver);
+static ULONG		syfala_release(void* inDriver);
+static OSStatus		syfala_initialize(AudioServerPlugInDriverRef inDriver, AudioServerPlugInHostRef inHost);
+static OSStatus		syfala_create_device(AudioServerPlugInDriverRef inDriver, CFDictionaryRef inDescription, const AudioServerPlugInClientInfo* inClientInfo, AudioObjectID* outDeviceObjectID);
+static OSStatus		syfala_destroy_device(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID);
+static OSStatus		syfala_add_device_client(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, const AudioServerPlugInClientInfo* inClientInfo);
+static OSStatus		syfala_remove_device_client(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, const AudioServerPlugInClientInfo* inClientInfo);
+static OSStatus		syfala_perform_device_configuration_change(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, UInt64 inChangeAction, void* inChangeInfo);
+static OSStatus		syfala_AbortDeviceConfigurationChange(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, UInt64 inChangeAction, void* inChangeInfo);
+static Boolean		syfala_HasProperty(AudioServerPlugInDriverRef inDriver, AudioObjectID inObjectID, pid_t inClientProcessID, const AudioObjectPropertyAddress* inAddress);
+static OSStatus		syfala_IsPropertySettable(AudioServerPlugInDriverRef inDriver, AudioObjectID inObjectID, pid_t inClientProcessID, const AudioObjectPropertyAddress* inAddress, Boolean* outIsSettable);
+static OSStatus		syfala_GetPropertyDataSize(AudioServerPlugInDriverRef inDriver, AudioObjectID inObjectID, pid_t inClientProcessID, const AudioObjectPropertyAddress* inAddress, UInt32 inQualifierDataSize, const void* inQualifierData, UInt32* outDataSize);
+static OSStatus		syfala_GetPropertyData(AudioServerPlugInDriverRef inDriver, AudioObjectID inObjectID, pid_t inClientProcessID, const AudioObjectPropertyAddress* inAddress, UInt32 inQualifierDataSize, const void* inQualifierData, UInt32 inDataSize, UInt32* outDataSize, void* outData);
+static OSStatus		syfala_SetPropertyData(AudioServerPlugInDriverRef inDriver, AudioObjectID inObjectID, pid_t inClientProcessID, const AudioObjectPropertyAddress* inAddress, UInt32 inQualifierDataSize, const void* inQualifierData, UInt32 inDataSize, const void* inData);
+static OSStatus		syfala_StartIO(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, UInt32 inClientID);
+static OSStatus		syfala_StopIO(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, UInt32 inClientID);
+static OSStatus		syfala_GetZeroTimeStamp(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, UInt32 inClientID, Float64* outSampleTime, UInt64* outHostTime, UInt64* outSeed);
+static OSStatus		syfala_WillDoIOOperation(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, UInt32 inClientID, UInt32 inOperationID, Boolean* outWillDo, Boolean* outWillDoInPlace);
+static OSStatus		syfala_BeginIOOperation(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, UInt32 inClientID, UInt32 inOperationID, UInt32 inIOBufferFrameSize, const AudioServerPlugInIOCycleInfo* inIOCycleInfo);
+static OSStatus		syfala_DoIOOperation(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, AudioObjectID inStreamObjectID, UInt32 inClientID, UInt32 inOperationID, UInt32 inIOBufferFrameSize, const AudioServerPlugInIOCycleInfo* inIOCycleInfo, void* ioMainBuffer, void* ioSecondaryBuffer);
+static OSStatus		syfala_EndIOOperation(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, UInt32 inClientID, UInt32 inOperationID, UInt32 inIOBufferFrameSize, const AudioServerPlugInIOCycleInfo* inIOCycleInfo);
 
-static Boolean		SpaceBar_HasPlugInProperty(const AudioObjectPropertyAddress* inAddress);
-static OSStatus		SpaceBar_IsPlugInPropertySettable(const AudioObjectPropertyAddress* inAddress, Boolean* outIsSettable);
-static OSStatus		SpaceBar_GetPlugInPropertyDataSize(const AudioObjectPropertyAddress* inAddress, UInt32 inQualifierDataSize, const void* inQualifierData, UInt32* outDataSize);
-static OSStatus		SpaceBar_GetPlugInPropertyData(const AudioObjectPropertyAddress* inAddress, UInt32 inQualifierDataSize, const void* inQualifierData, UInt32 inDataSize, UInt32* outDataSize, void* outData);
+static Boolean		syfala_HasPlugInProperty(const AudioObjectPropertyAddress* inAddress);
+static OSStatus		syfala_IsPlugInPropertySettable(const AudioObjectPropertyAddress* inAddress, Boolean* outIsSettable);
+static OSStatus		syfala_GetPlugInPropertyDataSize(const AudioObjectPropertyAddress* inAddress, UInt32 inQualifierDataSize, const void* inQualifierData, UInt32* outDataSize);
+static OSStatus		syfala_GetPlugInPropertyData(const AudioObjectPropertyAddress* inAddress, UInt32 inQualifierDataSize, const void* inQualifierData, UInt32 inDataSize, UInt32* outDataSize, void* outData);
 
-static Boolean		SpaceBar_HasDeviceProperty(const AudioObjectPropertyAddress* inAddress);
-static OSStatus		SpaceBar_IsDevicePropertySettable(const AudioObjectPropertyAddress* inAddress, Boolean* outIsSettable);
-static OSStatus		SpaceBar_GetDevicePropertyDataSize(const AudioObjectPropertyAddress* inAddress, UInt32* outDataSize);
-static OSStatus		SpaceBar_GetDevicePropertyData(const AudioObjectPropertyAddress* inAddress, UInt32 inDataSize, UInt32* outDataSize, void* outData);
+static Boolean		syfala_HasDeviceProperty(const AudioObjectPropertyAddress* inAddress);
+static OSStatus		syfala_IsDevicePropertySettable(const AudioObjectPropertyAddress* inAddress, Boolean* outIsSettable);
+static OSStatus		syfala_GetDevicePropertyDataSize(const AudioObjectPropertyAddress* inAddress, UInt32* outDataSize);
+static OSStatus		syfala_GetDevicePropertyData(const AudioObjectPropertyAddress* inAddress, UInt32 inDataSize, UInt32* outDataSize, void* outData);
 
-static Boolean		SpaceBar_HasStreamProperty(const AudioObjectPropertyAddress* inAddress);
-static OSStatus		SpaceBar_IsStreamPropertySettable(const AudioObjectPropertyAddress* inAddress, Boolean* outIsSettable);
-static OSStatus		SpaceBar_GetStreamPropertyDataSize(const AudioObjectPropertyAddress* inAddress, UInt32* outDataSize);
-static OSStatus		SpaceBar_GetStreamPropertyData(const AudioObjectPropertyAddress* inAddress, UInt32 inDataSize, UInt32* outDataSize, void* outData);
+static Boolean		syfala_HasStreamProperty(const AudioObjectPropertyAddress* inAddress);
+static OSStatus		syfala_IsStreamPropertySettable(const AudioObjectPropertyAddress* inAddress, Boolean* outIsSettable);
+static OSStatus		syfala_GetStreamPropertyDataSize(const AudioObjectPropertyAddress* inAddress, UInt32* outDataSize);
+static OSStatus		syfala_GetStreamPropertyData(const AudioObjectPropertyAddress* inAddress, UInt32 inDataSize, UInt32* outDataSize, void* outData);
 
-static Boolean		SpaceBar_HasControlProperty(AudioObjectID inObjectID, const AudioObjectPropertyAddress* inAddress);
-static OSStatus		SpaceBar_IsControlPropertySettable(AudioObjectID inObjectID, const AudioObjectPropertyAddress* inAddress, Boolean* outIsSettable);
-static OSStatus		SpaceBar_GetControlPropertyDataSize(AudioObjectID inObjectID, const AudioObjectPropertyAddress* inAddress, UInt32* outDataSize);
-static OSStatus		SpaceBar_GetControlPropertyData(AudioObjectID inObjectID, const AudioObjectPropertyAddress* inAddress, UInt32 inDataSize, UInt32* outDataSize, void* outData);
-static OSStatus		SpaceBar_SetControlPropertyData(AudioObjectID inObjectID, const AudioObjectPropertyAddress* inAddress, UInt32 inDataSize, const void* inData, UInt32* outNumberPropertiesChanged, AudioObjectPropertyAddress outChangedAddresses[2]);
+static Boolean		syfala_HasControlProperty(AudioObjectID inObjectID, const AudioObjectPropertyAddress* inAddress);
+static OSStatus		syfala_IsControlPropertySettable(AudioObjectID inObjectID, const AudioObjectPropertyAddress* inAddress, Boolean* outIsSettable);
+static OSStatus		syfala_GetControlPropertyDataSize(AudioObjectID inObjectID, const AudioObjectPropertyAddress* inAddress, UInt32* outDataSize);
+static OSStatus		syfala_GetControlPropertyData(AudioObjectID inObjectID, const AudioObjectPropertyAddress* inAddress, UInt32 inDataSize, UInt32* outDataSize, void* outData);
+static OSStatus		syfala_SetControlPropertyData(AudioObjectID inObjectID, const AudioObjectPropertyAddress* inAddress, UInt32 inDataSize, const void* inData, UInt32* outNumberPropertiesChanged, AudioObjectPropertyAddress outChangedAddresses[2]);
 
 #pragma mark State
 
 static AudioServerPlugInHostRef HOST = NULL;
 
-// All of the plugin's methods are exposed through this struct, which we a reference to in the factory function
+// All of the plugin's methods are exposed through this struct, which we return a reference to in the factory function
 static AudioServerPlugInDriverInterface	DRIVER_INTERFACE = {
 	._reserved = NULL,
-	.QueryInterface = SpaceBar_QueryInterface,
-	.AddRef = SpaceBar_AddRef,
-	.Release = SpaceBar_Release,
-	.Initialize = SpaceBar_Initialize,
-	.CreateDevice = SpaceBar_CreateDevice,
-	.DestroyDevice = SpaceBar_DestroyDevice,
-	.AddDeviceClient = SpaceBar_AddDeviceClient,
-	.RemoveDeviceClient = SpaceBar_RemoveDeviceClient,
-	.PerformDeviceConfigurationChange = SpaceBar_PerformDeviceConfigurationChange,
-	.AbortDeviceConfigurationChange = SpaceBar_AbortDeviceConfigurationChange,
-	.HasProperty = SpaceBar_HasProperty,
-	.IsPropertySettable = SpaceBar_IsPropertySettable,
-	.GetPropertyDataSize = SpaceBar_GetPropertyDataSize,
-	.GetPropertyData = SpaceBar_GetPropertyData,
-	.SetPropertyData = SpaceBar_SetPropertyData,
-	.StartIO = SpaceBar_StartIO,
-	.StopIO = SpaceBar_StopIO,
-	.GetZeroTimeStamp = SpaceBar_GetZeroTimeStamp,
-	.WillDoIOOperation = SpaceBar_WillDoIOOperation,
-	.BeginIOOperation = SpaceBar_BeginIOOperation,
-	.DoIOOperation = SpaceBar_DoIOOperation,
-	.EndIOOperation = SpaceBar_EndIOOperation
+	.QueryInterface = syfala_query_interface,
+	.AddRef = syfala_add_ref,
+	.Release = syfala_release,
+	.Initialize = syfala_initialize,
+	.CreateDevice = syfala_create_device,
+	.DestroyDevice = syfala_destroy_device,
+	.AddDeviceClient = syfala_add_device_client,
+	.RemoveDeviceClient = syfala_remove_device_client,
+	.PerformDeviceConfigurationChange = syfala_perform_device_configuration_change,
+	.AbortDeviceConfigurationChange = syfala_AbortDeviceConfigurationChange,
+	.HasProperty = syfala_HasProperty,
+	.IsPropertySettable = syfala_IsPropertySettable,
+	.GetPropertyDataSize = syfala_GetPropertyDataSize,
+	.GetPropertyData = syfala_GetPropertyData,
+	.SetPropertyData = syfala_SetPropertyData,
+	.StartIO = syfala_StartIO,
+	.StopIO = syfala_StopIO,
+	.GetZeroTimeStamp = syfala_GetZeroTimeStamp,
+	.WillDoIOOperation = syfala_WillDoIOOperation,
+	.BeginIOOperation = syfala_BeginIOOperation,
+	.DoIOOperation = syfala_DoIOOperation,
+	.EndIOOperation = syfala_EndIOOperation
 };
 
 static AudioServerPlugInDriverInterface*	DRIVER_OBJECT					= &DRIVER_INTERFACE;
@@ -229,9 +229,9 @@ static AudioServerPlugInDriverRef			DRIVER_REF						= &DRIVER_OBJECT;
 static _Atomic(UInt32)						PLUGIN_REF_COUNT				= 0;
 static _Atomic(bool)						IS_OUTPUT_STREAM_ACTIVE			= true;
 
-#define                                     kDevice_UID                     "SpaceBar_UID"
+#define                                     kDevice_UID                     "syfala_UID"
 
-#define                                     kDevice_ModelUID                "SpaceBar_ModelUID"
+#define                                     kDevice_ModelUID                "syfala_ModelUID"
 
 static UInt32 const							kDevice_RingBufferSize			= 16384;
 
@@ -264,9 +264,7 @@ static _Atomic(bool)                        OUTPUT_MUTE[N_CHANNELS + 1]     = {}
 // This is the only function exposed by the library, It's name must be indicated in the CFPlugInFactories field
 // the bundle's Info.plist file
 
-// All
-
-void* SpaceBar_Create(
+void* syfala_create(
 	CFAllocatorRef const inAllocator,
 	CFUUIDRef const inRequestedTypeUUID
 ) {
@@ -300,7 +298,7 @@ void* SpaceBar_Create(
 
 #pragma mark Inheritence
 
-static HRESULT SpaceBar_QueryInterface(
+static HRESULT syfala_query_interface(
 	void* const inDriver,
 	REFIID const inUUID,
 	LPVOID* const outInterface
@@ -318,8 +316,8 @@ static HRESULT SpaceBar_QueryInterface(
 		CFUUIDGetUUIDBytes(kAudioServerPlugInDriverInterfaceUUID);
 
 	//	check args
-	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "SpaceBar_QueryInterface: bad driver reference");
-	DoIfFailed(outInterface == NULL, return kAudioHardwareIllegalOperationError, "SpaceBar_QueryInterface: no place to store the returned interface");
+	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_query_interface: bad driver reference");
+	DoIfFailed(outInterface == NULL, return kAudioHardwareIllegalOperationError, "syfala_query_interface: no place to store the returned interface");
 
 	//	AudioServerPlugIns only support two interfaces, IUnknown (which has to be supported by all
 	//	CFPlugIns and AudioServerPlugInDriverInterface (which is the actual interface the HAL will
@@ -337,30 +335,28 @@ static HRESULT SpaceBar_QueryInterface(
 	return kAudioHardwareNoError;
 }
 
-static ULONG SpaceBar_AddRef(
+static ULONG syfala_add_ref(
 	void* const inDriver
 ) {
 	//	This call returns the resulting reference count after the increment.
 
-	//	declare the local variables
-
 	DebugMsg("AddRef");
 	
 	// check args
-	DoIfFailed(inDriver != DRIVER_REF, return 0, "SpaceBar_AddRef: bad driver reference");
+	DoIfFailed(inDriver != DRIVER_REF, return 0, "syfala_add_ref: bad driver reference");
 
 	//	increment the refcount, return the new value
 	return atomic_fetch_add_explicit(&PLUGIN_REF_COUNT, 1, __ATOMIC_RELAXED) + 1;
 }
 
-static ULONG SpaceBar_Release(
+static ULONG syfala_release(
 	void* const inDriver
 ) {
 	//	This call returns the resulting reference count after the decrement.
 	DebugMsg("Release");
 	
 	// check args
-	DoIfFailed(inDriver != DRIVER_REF, return 0, "SpaceBar_Release: bad driver reference");
+	DoIfFailed(inDriver != DRIVER_REF, return 0, "syfala_Release: bad driver reference");
 	
 	// decrement the refcount, return the new value
 	return atomic_fetch_sub_explicit(&PLUGIN_REF_COUNT, 1, __ATOMIC_RELAXED) - 1;
@@ -368,7 +364,7 @@ static ULONG SpaceBar_Release(
 
 #pragma mark Basic Operations
 
-static OSStatus	SpaceBar_Initialize(
+static OSStatus	syfala_initialize(
 	AudioServerPlugInDriverRef const inDriver,
 	AudioServerPlugInHostRef const inHost
 ) {
@@ -380,7 +376,7 @@ static OSStatus	SpaceBar_Initialize(
 	DebugMsg("Initialize");
 	
 	// check args
-	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "SpaceBar_Initialize: bad driver reference");
+	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_initialize: bad driver reference");
 	
 	// One specific thing that needs to be done is to store the AudioServerPlugInHostRef
 	// so that it can be used later. This is the object used by our plugin to notify the host
@@ -399,7 +395,7 @@ static OSStatus	SpaceBar_Initialize(
 	return kAudioHardwareNoError;
 }
 
-static OSStatus	SpaceBar_CreateDevice(
+static OSStatus	syfala_create_device(
 	AudioServerPlugInDriverRef const inDriver,
 	CFDictionaryRef const inDescription,
 	AudioServerPlugInClientInfo const* const inClientInfo,
@@ -413,12 +409,12 @@ static OSStatus	SpaceBar_CreateDevice(
 	DebugMsg("CreateDevice");
 
 	// check args
-	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "SpaceBar_CreateDevice: bad driver reference");
+	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_create_device: bad driver reference");
 
 	return kAudioHardwareUnsupportedOperationError;
 }
 
-static OSStatus	SpaceBar_DestroyDevice(
+static OSStatus	syfala_destroy_device(
 	AudioServerPlugInDriverRef const inDriver,
 	AudioObjectID const inDeviceObjectID
 ) {
@@ -431,12 +427,12 @@ static OSStatus	SpaceBar_DestroyDevice(
 	DebugMsg("DestroyDevice");
 	
 	// check args
-	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "SpaceBar_DestroyDevice: bad driver reference");
+	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_destroy_device: bad driver reference");
 
 	return kAudioHardwareUnsupportedOperationError;
 }
 
-static OSStatus	SpaceBar_AddDeviceClient(
+static OSStatus	syfala_add_device_client(
 	AudioServerPlugInDriverRef const inDriver,
 	AudioObjectID const inDeviceObjectID,
 	AudioServerPlugInClientInfo const* const inClientInfo
@@ -451,13 +447,13 @@ static OSStatus	SpaceBar_AddDeviceClient(
 	#pragma unused(inClientInfo)
 	
 	// check args
-	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "SpaceBar_AddDeviceClient: bad driver reference");
-	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "SpaceBar_AddDeviceClient: bad device ID");
+	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_add_device_client: bad driver reference");
+	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "syfala_add_device_client: bad device ID");
 
 	return kAudioHardwareNoError;
 }
 
-static OSStatus	SpaceBar_RemoveDeviceClient(
+static OSStatus	syfala_remove_device_client(
 	AudioServerPlugInDriverRef const inDriver,
 	AudioObjectID const inDeviceObjectID,
 	AudioServerPlugInClientInfo const* const inClientInfo
@@ -471,13 +467,13 @@ static OSStatus	SpaceBar_RemoveDeviceClient(
 	#pragma unused(inClientInfo)
 	
 	// check args
-	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "SpaceBar_RemoveDeviceClient: bad driver reference");
-	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "SpaceBar_RemoveDeviceClient: bad device ID");
+	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_remove_device_client: bad driver reference");
+	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "syfala_remove_device_client: bad device ID");
 
 	return kAudioHardwareNoError;
 }
 
-static OSStatus	SpaceBar_PerformDeviceConfigurationChange(
+static OSStatus	syfala_perform_device_configuration_change(
 	AudioServerPlugInDriverRef const inDriver,
 	AudioObjectID const inDeviceObjectID,
 	UInt64 const inChangeAction,
@@ -502,13 +498,13 @@ static OSStatus	SpaceBar_PerformDeviceConfigurationChange(
 	#pragma unused(inChangeInfo)
 	
 	// check args
-	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "SpaceBar_PerformDeviceConfigurationChange: bad driver reference");
-	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "SpaceBar_PerformDeviceConfigurationChange: bad device ID");
+	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_perform_device_configuration_change: bad driver reference");
+	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "syfala_perform_device_configuration_change: bad device ID");
 	
 	return kAudioHardwareNoError;
 }
 
-static OSStatus	SpaceBar_AbortDeviceConfigurationChange(
+static OSStatus	syfala_AbortDeviceConfigurationChange(
 	AudioServerPlugInDriverRef const inDriver,
 	AudioObjectID const inDeviceObjectID,
 	UInt64 const inChangeAction,
@@ -524,15 +520,15 @@ static OSStatus	SpaceBar_AbortDeviceConfigurationChange(
 	#pragma unused(inChangeAction, inChangeInfo)
 	
 	// check args
-	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "SpaceBar_PerformDeviceConfigurationChange: bad driver reference");
-	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "SpaceBar_PerformDeviceConfigurationChange: bad device ID");
+	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_perform_device_configuration_change: bad driver reference");
+	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "syfala_perform_device_configuration_change: bad device ID");
 
 	return kAudioHardwareNoError;
 }
 
 #pragma mark Property Operations
 
-static Boolean	SpaceBar_HasProperty(
+static Boolean	syfala_HasProperty(
 	AudioServerPlugInDriverRef const inDriver,
 	AudioObjectID const inObjectID,
 	pid_t const inClientProcessID,
@@ -551,25 +547,25 @@ static Boolean	SpaceBar_HasProperty(
 	);
 		
 	//	check args
-	DoIfFailed(inDriver != DRIVER_REF, return false, "SpaceBar_HasProperty: bad driver reference");
-	DoIfFailed(inAddress == NULL, return false, "SpaceBar_HasProperty: no address");
+	DoIfFailed(inDriver != DRIVER_REF, return false, "syfala_HasProperty: bad driver reference");
+	DoIfFailed(inAddress == NULL, return false, "syfala_HasProperty: no address");
 
 	switch(inObjectID)
 	{
 		case PLUGIN_ID:
-			return SpaceBar_HasPlugInProperty(inAddress);
+			return syfala_HasPlugInProperty(inAddress);
 		
 		case DEVICE_ID:
-			return SpaceBar_HasDeviceProperty(inAddress);
+			return syfala_HasDeviceProperty(inAddress);
 		
 		case STREAM_ID:
-			return SpaceBar_HasStreamProperty(inAddress);
+			return syfala_HasStreamProperty(inAddress);
 	}
 
-	return audio_object_is_control(inObjectID) && SpaceBar_HasControlProperty(inObjectID, inAddress);
+	return audio_object_is_control(inObjectID) && syfala_HasControlProperty(inObjectID, inAddress);
 }
 
-static OSStatus	SpaceBar_IsPropertySettable(
+static OSStatus	syfala_IsPropertySettable(
 	AudioServerPlugInDriverRef const inDriver,
 	AudioObjectID const inObjectID,
 	pid_t const inClientProcessID,
@@ -589,28 +585,28 @@ static OSStatus	SpaceBar_IsPropertySettable(
 	);
 
 	//	check args
-	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "SpaceBar_IsPropertySettable: bad driver reference");
-	DoIfFailed(inAddress == NULL, return kAudioHardwareIllegalOperationError, "SpaceBar_IsPropertySettable: no address");
-	DoIfFailed(outIsSettable == NULL, return kAudioHardwareIllegalOperationError, "SpaceBar_IsPropertySettable: no place to put the return value");
+	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_IsPropertySettable: bad driver reference");
+	DoIfFailed(inAddress == NULL, return kAudioHardwareIllegalOperationError, "syfala_IsPropertySettable: no address");
+	DoIfFailed(outIsSettable == NULL, return kAudioHardwareIllegalOperationError, "syfala_IsPropertySettable: no place to put the return value");
 
 	switch(inObjectID)
 	{
 		case PLUGIN_ID:
-			return SpaceBar_IsPlugInPropertySettable(inAddress, outIsSettable);
+			return syfala_IsPlugInPropertySettable(inAddress, outIsSettable);
 		
 		case DEVICE_ID:
-			return SpaceBar_IsDevicePropertySettable(inAddress, outIsSettable);
+			return syfala_IsDevicePropertySettable(inAddress, outIsSettable);
 		
 		case STREAM_ID:
-			return SpaceBar_IsStreamPropertySettable(inAddress, outIsSettable);
+			return syfala_IsStreamPropertySettable(inAddress, outIsSettable);
 	};
 
 	return (audio_object_is_control(inObjectID)) ?
-		SpaceBar_IsControlPropertySettable(inObjectID, inAddress, outIsSettable) :
+		syfala_IsControlPropertySettable(inObjectID, inAddress, outIsSettable) :
 		kAudioHardwareBadObjectError;
 }
 
-static OSStatus	SpaceBar_GetPropertyDataSize(
+static OSStatus	syfala_GetPropertyDataSize(
 	AudioServerPlugInDriverRef const inDriver,
 	AudioObjectID const inObjectID,
 	pid_t const inClientProcessID,
@@ -632,14 +628,14 @@ static OSStatus	SpaceBar_GetPropertyDataSize(
 	);
 	
 	//	check args
-	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "SpaceBar_GetPropertyDataSize: bad driver reference");
-	DoIfFailed(inAddress == NULL, return kAudioHardwareIllegalOperationError, "SpaceBar_GetPropertyDataSize: no address");
-	DoIfFailed(outDataSize == NULL, return kAudioHardwareIllegalOperationError, "SpaceBar_GetPropertyDataSize: no place to put the return value");
+	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_GetPropertyDataSize: bad driver reference");
+	DoIfFailed(inAddress == NULL, return kAudioHardwareIllegalOperationError, "syfala_GetPropertyDataSize: no address");
+	DoIfFailed(outDataSize == NULL, return kAudioHardwareIllegalOperationError, "syfala_GetPropertyDataSize: no place to put the return value");
 
 	switch(inObjectID)
 	{
 		case PLUGIN_ID:
-			return SpaceBar_GetPlugInPropertyDataSize(
+			return syfala_GetPlugInPropertyDataSize(
 				inAddress,
 				inQualifierDataSize,
 				inQualifierData,
@@ -647,18 +643,18 @@ static OSStatus	SpaceBar_GetPropertyDataSize(
 			);
 		
 		case DEVICE_ID:
-			return SpaceBar_GetDevicePropertyDataSize(inAddress, outDataSize);
+			return syfala_GetDevicePropertyDataSize(inAddress, outDataSize);
 		
 		case STREAM_ID:
-			return SpaceBar_GetStreamPropertyDataSize(inAddress, outDataSize);
+			return syfala_GetStreamPropertyDataSize(inAddress, outDataSize);
 	};
 
 	return (audio_object_is_control(inObjectID)) ?
-		SpaceBar_GetControlPropertyDataSize(inObjectID, inAddress, outDataSize) :
+		syfala_GetControlPropertyDataSize(inObjectID, inAddress, outDataSize) :
 		kAudioHardwareBadObjectError;
 }
 
-static OSStatus	SpaceBar_GetPropertyData(
+static OSStatus	syfala_GetPropertyData(
 	AudioServerPlugInDriverRef const inDriver,
 	AudioObjectID const inObjectID,
 	pid_t const inClientProcessID,
@@ -682,15 +678,15 @@ static OSStatus	SpaceBar_GetPropertyData(
 	);
 
 	//	check args
-	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "SpaceBar_GetPropertyData: bad driver reference");
-	DoIfFailed(inAddress == NULL, return kAudioHardwareIllegalOperationError, "SpaceBar_GetPropertyData: no address");
-	DoIfFailed(outDataSize == NULL, return kAudioHardwareIllegalOperationError, "SpaceBar_GetPropertyData: no place to put the return value size");
-	DoIfFailed(outData == NULL, return kAudioHardwareIllegalOperationError, "SpaceBar_GetPropertyData: no place to put the return value");
+	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_GetPropertyData: bad driver reference");
+	DoIfFailed(inAddress == NULL, return kAudioHardwareIllegalOperationError, "syfala_GetPropertyData: no address");
+	DoIfFailed(outDataSize == NULL, return kAudioHardwareIllegalOperationError, "syfala_GetPropertyData: no place to put the return value size");
+	DoIfFailed(outData == NULL, return kAudioHardwareIllegalOperationError, "syfala_GetPropertyData: no place to put the return value");
 
 	switch(inObjectID)
 	{
 		case PLUGIN_ID:
-			return SpaceBar_GetPlugInPropertyData(
+			return syfala_GetPlugInPropertyData(
 				inAddress,
 				inQualifierDataSize,
 				inQualifierData,
@@ -700,18 +696,18 @@ static OSStatus	SpaceBar_GetPropertyData(
 			);
 
 		case DEVICE_ID:
-			return SpaceBar_GetDevicePropertyData(inAddress, inDataSize, outDataSize, outData);
+			return syfala_GetDevicePropertyData(inAddress, inDataSize, outDataSize, outData);
 		
 		case STREAM_ID:
-			return SpaceBar_GetStreamPropertyData(inAddress, inDataSize, outDataSize, outData);
+			return syfala_GetStreamPropertyData(inAddress, inDataSize, outDataSize, outData);
 	};
 
 	return (audio_object_is_control(inObjectID)) ?
-		SpaceBar_GetControlPropertyData(inObjectID, inAddress, inDataSize, outDataSize, outData) :
+		syfala_GetControlPropertyData(inObjectID, inAddress, inDataSize, outDataSize, outData) :
 		kAudioHardwareBadObjectError;
 }
 
-static OSStatus	SpaceBar_SetPropertyData(
+static OSStatus	syfala_SetPropertyData(
 	AudioServerPlugInDriverRef const inDriver,
 	AudioObjectID const inObjectID,
 	pid_t const inClientProcessID,
@@ -734,8 +730,8 @@ static OSStatus	SpaceBar_SetPropertyData(
 	);
 
 	//	check args
-	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "SpaceBar_SetPropertyData: bad driver reference");
-	DoIfFailed(inAddress == NULL, return kAudioHardwareIllegalOperationError, "SpaceBar_SetPropertyData: no address");
+	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_SetPropertyData: bad driver reference");
+	DoIfFailed(inAddress == NULL, return kAudioHardwareIllegalOperationError, "syfala_SetPropertyData: no address");
 
 	// Only 2 * (N_CHANNELS + 1) + 1 properties are settable in our plugin:
 	//		- Whether the output stream is active.
@@ -745,7 +741,7 @@ static OSStatus	SpaceBar_SetPropertyData(
 		if (inAddress->mSelector == kAudioStreamPropertyIsActive) {
 			//	Changing the active state of a stream doesn't affect IO or change the structure
 			//	so we can just save the state and send the notification.
-			DoIfFailed(inDataSize != sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "SpaceBar_SetStreamPropertyData: wrong size for the data for kAudioDevicePropertyNominalSampleRate");
+			DoIfFailed(inDataSize != sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "syfala_SetStreamPropertyData: wrong size for the data for kAudioDevicePropertyNominalSampleRate");
 			bool const new_state = (*((UInt32 const*)inData) != 0);
 	
 			atomic_store_explicit(&IS_OUTPUT_STREAM_ACTIVE, new_state, __ATOMIC_RELAXED);
@@ -764,7 +760,7 @@ static OSStatus	SpaceBar_SetPropertyData(
 		// it changes both the scalar value property and the decibel value property
 		AudioObjectPropertyAddress changed_addrs[2];
 
-		OSStatus const status = SpaceBar_SetControlPropertyData(
+		OSStatus const status = syfala_SetControlPropertyData(
 			inObjectID,
 			inAddress,
 			inDataSize,
@@ -788,7 +784,7 @@ static OSStatus	SpaceBar_SetPropertyData(
 
 #pragma mark PlugIn Property Operations
 
-static Boolean	SpaceBar_HasPlugInProperty(
+static Boolean	syfala_HasPlugInProperty(
 	AudioObjectPropertyAddress const* const inAddress
 ) {
 	//	This method returns whether or not the plug-in object has the given property.
@@ -810,7 +806,7 @@ static Boolean	SpaceBar_HasPlugInProperty(
 	return false;
 }
 
-static OSStatus	SpaceBar_IsPlugInPropertySettable(
+static OSStatus	syfala_IsPlugInPropertySettable(
 	AudioObjectPropertyAddress const* const inAddress,
 	Boolean* const outIsSettable
 ) {
@@ -835,7 +831,7 @@ static OSStatus	SpaceBar_IsPlugInPropertySettable(
 	return kAudioHardwareNoError;
 }
 
-static OSStatus	SpaceBar_GetPlugInPropertyDataSize(
+static OSStatus	syfala_GetPlugInPropertyDataSize(
 	AudioObjectPropertyAddress const* const inAddress,
 	UInt32 const inQualifierDataSize,
 	void const* const inQualifierData,
@@ -845,7 +841,7 @@ static OSStatus	SpaceBar_GetPlugInPropertyDataSize(
 
 	//	Note that for each object, this driver implements all the required properties plus a few
 	//	extras that are useful but not required. There is more detailed commentary about each
-	//	property in the SpaceBar_GetPlugInPropertyData() method.
+	//	property in the syfala_GetPlugInPropertyData() method.
 	switch(inAddress->mSelector)
 	{
 		case kAudioObjectPropertyBaseClass:
@@ -881,7 +877,7 @@ static OSStatus	SpaceBar_GetPlugInPropertyDataSize(
 	return kAudioHardwareNoError;
 }
 
-static OSStatus	SpaceBar_GetPlugInPropertyData(
+static OSStatus	syfala_GetPlugInPropertyData(
 	AudioObjectPropertyAddress const* const inAddress,
 	UInt32 const inQualifierDataSize,
 	void const* const inQualifierData,
@@ -898,28 +894,28 @@ static OSStatus	SpaceBar_GetPlugInPropertyData(
 	{
 		case kAudioObjectPropertyBaseClass:
 			//	The base class for kAudioPlugInClassID is kAudioObjectClassID
-			DoIfFailed(inDataSize < sizeof(AudioClassID), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetPlugInPropertyData: not enough space for the return value of kAudioObjectPropertyBaseClass for the plug-in");
+			DoIfFailed(inDataSize < sizeof(AudioClassID), return kAudioHardwareBadPropertySizeError, "syfala_GetPlugInPropertyData: not enough space for the return value of kAudioObjectPropertyBaseClass for the plug-in");
 			*((AudioClassID*)outData) = kAudioObjectClassID;
 			*outDataSize = sizeof(AudioClassID);
 			break;
 			
 		case kAudioObjectPropertyClass:
 			//	The class is always kAudioPlugInClassID for regular drivers
-			DoIfFailed(inDataSize < sizeof(AudioClassID), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetPlugInPropertyData: not enough space for the return value of kAudioObjectPropertyClass for the plug-in");
+			DoIfFailed(inDataSize < sizeof(AudioClassID), return kAudioHardwareBadPropertySizeError, "syfala_GetPlugInPropertyData: not enough space for the return value of kAudioObjectPropertyClass for the plug-in");
 			*((AudioClassID*)outData) = kAudioPlugInClassID;
 			*outDataSize = sizeof(AudioClassID);
 			break;
 			
 		case kAudioObjectPropertyOwner:
 			//	The plug-in doesn't have an owning object
-			DoIfFailed(inDataSize < sizeof(AudioObjectID), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetPlugInPropertyData: not enough space for the return value of kAudioObjectPropertyOwner for the plug-in");
+			DoIfFailed(inDataSize < sizeof(AudioObjectID), return kAudioHardwareBadPropertySizeError, "syfala_GetPlugInPropertyData: not enough space for the return value of kAudioObjectPropertyOwner for the plug-in");
 			*((AudioObjectID*)outData) = kAudioObjectUnknown;
 			*outDataSize = sizeof(AudioObjectID);
 			break;
 			
 		case kAudioObjectPropertyManufacturer:
 			//	This is the human readable name of the maker of the plug-in.
-			DoIfFailed(inDataSize < sizeof(CFStringRef), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetPlugInPropertyData: not enough space for the return value of kAudioObjectPropertyManufacturer for the plug-in");
+			DoIfFailed(inDataSize < sizeof(CFStringRef), return kAudioHardwareBadPropertySizeError, "syfala_GetPlugInPropertyData: not enough space for the return value of kAudioObjectPropertyManufacturer for the plug-in");
 			*((CFStringRef*)outData) = CFSTR("GRAME CNCM");
 			*outDataSize = sizeof(CFStringRef);
 			break;
@@ -953,9 +949,9 @@ static OSStatus	SpaceBar_GetPlugInPropertyData(
 			//	just the one device. Note that it is not an error if the string in the
 			//	qualifier doesn't match any devices. In such case, kAudioObjectUnknown is
 			//	the object ID to return.
-			DoIfFailed(inDataSize < sizeof(AudioObjectID), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetPlugInPropertyData: not enough space for the return value of kAudioPlugInPropertyTranslateUIDToDevice");
-			DoIfFailed(inQualifierDataSize != sizeof(CFStringRef), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetPlugInPropertyData: the qualifier is the wrong size for kAudioPlugInPropertyTranslateUIDToDevice");
-			DoIfFailed(inQualifierData == NULL, return kAudioHardwareBadPropertySizeError, "SpaceBar_GetPlugInPropertyData: no qualifier for kAudioPlugInPropertyTranslateUIDToDevice");
+			DoIfFailed(inDataSize < sizeof(AudioObjectID), return kAudioHardwareBadPropertySizeError, "syfala_GetPlugInPropertyData: not enough space for the return value of kAudioPlugInPropertyTranslateUIDToDevice");
+			DoIfFailed(inQualifierDataSize != sizeof(CFStringRef), return kAudioHardwareBadPropertySizeError, "syfala_GetPlugInPropertyData: the qualifier is the wrong size for kAudioPlugInPropertyTranslateUIDToDevice");
+			DoIfFailed(inQualifierData == NULL, return kAudioHardwareBadPropertySizeError, "syfala_GetPlugInPropertyData: no qualifier for kAudioPlugInPropertyTranslateUIDToDevice");
 			
 			if(
 				CFStringCompare(
@@ -974,7 +970,7 @@ static OSStatus	SpaceBar_GetPlugInPropertyData(
 			//	The resource bundle is a path relative to the path of the plug-in's bundle.
 			//	To specify that the plug-in bundle itself should be used, we just return the
 			//	empty string.
-			DoIfFailed(inDataSize < sizeof(AudioObjectID), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetPlugInPropertyData: not enough space for the return value of kAudioPlugInPropertyResourceBundle");
+			DoIfFailed(inDataSize < sizeof(AudioObjectID), return kAudioHardwareBadPropertySizeError, "syfala_GetPlugInPropertyData: not enough space for the return value of kAudioPlugInPropertyResourceBundle");
 			*((CFStringRef*)outData) = CFSTR("");
 			*outDataSize = sizeof(CFStringRef);
 			break;
@@ -988,7 +984,7 @@ static OSStatus	SpaceBar_GetPlugInPropertyData(
 
 #pragma mark Device Property Operations
 
-static Boolean	SpaceBar_HasDeviceProperty(
+static Boolean	syfala_HasDeviceProperty(
 	AudioObjectPropertyAddress const* const inAddress
 ) {
 	//	This method returns whether or not the given object has the given property.
@@ -1031,7 +1027,7 @@ static Boolean	SpaceBar_HasDeviceProperty(
 	return false;
 }
 
-static OSStatus	SpaceBar_IsDevicePropertySettable(
+static OSStatus	syfala_IsDevicePropertySettable(
 	AudioObjectPropertyAddress const* const inAddress,
 	Boolean* const outIsSettable
 ) {
@@ -1076,7 +1072,7 @@ static OSStatus	SpaceBar_IsDevicePropertySettable(
 	return kAudioHardwareNoError;
 }
 
-static OSStatus	SpaceBar_GetDevicePropertyDataSize(
+static OSStatus	syfala_GetDevicePropertyDataSize(
 	AudioObjectPropertyAddress const* const inAddress,
 	UInt32* const outDataSize
 ) {
@@ -1084,7 +1080,7 @@ static OSStatus	SpaceBar_GetDevicePropertyDataSize(
 	
 	//	Note that for each object, this driver implements all the required properties plus a few
 	//	extras that are useful but not required. There is more detailed commentary about each
-	//	property in the SpaceBar_GetDevicePropertyData() method.
+	//	property in the syfala_GetDevicePropertyData() method.
 	switch(inAddress->mSelector)
 	{
 		case kAudioObjectPropertyElementName:
@@ -1213,7 +1209,7 @@ static OSStatus	SpaceBar_GetDevicePropertyDataSize(
 	return kAudioHardwareNoError;
 }
 
-static OSStatus	SpaceBar_GetDevicePropertyData(
+static OSStatus	syfala_GetDevicePropertyData(
 	AudioObjectPropertyAddress const* const inAddress,
 	UInt32 const inDataSize,
 	UInt32* const outDataSize,
@@ -1228,7 +1224,7 @@ static OSStatus	SpaceBar_GetDevicePropertyData(
 	{
 		case kAudioObjectPropertyElementName: {
 			//	This is the human readable name of the maker of the plug-in.
-			DoIfFailed(inDataSize < sizeof(CFStringRef), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetDevicePropertyData: not enough space for the return value of kAudioObjectPropertyElementName for the device");
+			DoIfFailed(inDataSize < sizeof(CFStringRef), return kAudioHardwareBadPropertySizeError, "syfala_GetDevicePropertyData: not enough space for the return value of kAudioObjectPropertyElementName for the device");
 
 			CFStringRef* const data = (CFStringRef*) outData;
 			AudioObjectPropertyElement const elem = inAddress->mElement;
@@ -1247,35 +1243,35 @@ static OSStatus	SpaceBar_GetDevicePropertyData(
 
 		case kAudioObjectPropertyBaseClass:
 			//	The base class for kAudioDeviceClassID is kAudioObjectClassID
-			DoIfFailed(inDataSize < sizeof(AudioClassID), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetDevicePropertyData: not enough space for the return value of kAudioObjectPropertyBaseClass for the device");
+			DoIfFailed(inDataSize < sizeof(AudioClassID), return kAudioHardwareBadPropertySizeError, "syfala_GetDevicePropertyData: not enough space for the return value of kAudioObjectPropertyBaseClass for the device");
 			*((AudioClassID*)outData) = kAudioObjectClassID;
 			*outDataSize = sizeof(AudioClassID);
 			break;
 
 		case kAudioObjectPropertyClass:
 			//	The class is always kAudioDeviceClassID for devices created by drivers
-			DoIfFailed(inDataSize < sizeof(AudioClassID), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetDevicePropertyData: not enough space for the return value of kAudioObjectPropertyClass for the device");
+			DoIfFailed(inDataSize < sizeof(AudioClassID), return kAudioHardwareBadPropertySizeError, "syfala_GetDevicePropertyData: not enough space for the return value of kAudioObjectPropertyClass for the device");
 			*((AudioClassID*)outData) = kAudioDeviceClassID;
 			*outDataSize = sizeof(AudioClassID);
 			break;
 
 		case kAudioObjectPropertyOwner:
 			//	The device's owner is the plug-in object
-			DoIfFailed(inDataSize < sizeof(AudioObjectID), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetDevicePropertyData: not enough space for the return value of kAudioObjectPropertyOwner for the device");
+			DoIfFailed(inDataSize < sizeof(AudioObjectID), return kAudioHardwareBadPropertySizeError, "syfala_GetDevicePropertyData: not enough space for the return value of kAudioObjectPropertyOwner for the device");
 			*((AudioObjectID*)outData) = PLUGIN_ID;
 			*outDataSize = sizeof(AudioObjectID);
 			break;
 
 		case kAudioObjectPropertyName:
 			//	This is the human readable name of the device.
-			DoIfFailed(inDataSize < sizeof(CFStringRef), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetDevicePropertyData: not enough space for the return value of kAudioObjectPropertyName for the device");
+			DoIfFailed(inDataSize < sizeof(CFStringRef), return kAudioHardwareBadPropertySizeError, "syfala_GetDevicePropertyData: not enough space for the return value of kAudioObjectPropertyName for the device");
 			*((CFStringRef*)outData) = CFSTR("Space Bar");
 			*outDataSize = sizeof(CFStringRef);
 			break;
 
 		case kAudioObjectPropertyManufacturer:
 			//	This is the human readable name of the maker of the device.
-			DoIfFailed(inDataSize < sizeof(CFStringRef), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetDevicePropertyData: not enough space for the return value of kAudioObjectPropertyManufacturer for the device");
+			DoIfFailed(inDataSize < sizeof(CFStringRef), return kAudioHardwareBadPropertySizeError, "syfala_GetDevicePropertyData: not enough space for the return value of kAudioObjectPropertyManufacturer for the device");
 			*((CFStringRef*)outData) = CFSTR("GRAME"); 
 			*outDataSize = sizeof(CFStringRef);
 			break;
@@ -1329,7 +1325,7 @@ static OSStatus	SpaceBar_GetDevicePropertyData(
 			//	This is a CFString that is a persistent token that can identify the same
 			//	audio device across boot sessions. Note that two instances of the same
 			//	device must have different values for this property.
-			DoIfFailed(inDataSize < sizeof(CFStringRef), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyDeviceUID for the device");
+			DoIfFailed(inDataSize < sizeof(CFStringRef), return kAudioHardwareBadPropertySizeError, "syfala_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyDeviceUID for the device");
 			*((CFStringRef*)outData) = CFSTR(kDevice_UID);
 			*outDataSize = sizeof(CFStringRef);
 			break;
@@ -1338,7 +1334,7 @@ static OSStatus	SpaceBar_GetDevicePropertyData(
 			//	This is a CFString that is a persistent token that can identify audio
 			//	devices that are the same kind of device. Note that two instances of the
 			//	save device must have the same value for this property.
-			DoIfFailed(inDataSize < sizeof(CFStringRef), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyModelUID for the device");
+			DoIfFailed(inDataSize < sizeof(CFStringRef), return kAudioHardwareBadPropertySizeError, "syfala_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyModelUID for the device");
 			*((CFStringRef*)outData) = CFSTR(kDevice_ModelUID);
 			*outDataSize = sizeof(CFStringRef);
 			break;
@@ -1347,7 +1343,7 @@ static OSStatus	SpaceBar_GetDevicePropertyData(
 			//	This value represents how the device is attached to the system. This can be
 			//	any 32 bit integer, but common values for this property are defined in
 			//	<CoreAudio/AudioHardwareBase.h>
-			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyTransportType for the device");
+			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "syfala_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyTransportType for the device");
 			*((UInt32*)outData) = kAudioDeviceTransportTypeAVB;
 			*outDataSize = sizeof(UInt32);
 			break;
@@ -1387,7 +1383,7 @@ static OSStatus	SpaceBar_GetDevicePropertyData(
 			//	devices are synchronized in hardware. Note that a device that either can't
 			//	be synchronized with others or doesn't know should return 0 for this
 			//	property.
-			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyClockDomain for the device");
+			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "syfala_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyClockDomain for the device");
 			*((UInt32*)outData) = 0;
 			*outDataSize = sizeof(UInt32);
 			break;
@@ -1396,14 +1392,14 @@ static OSStatus	SpaceBar_GetDevicePropertyData(
 			//	This property returns whether or not the device is alive. Note that it is
 			//	note uncommon for a device to be dead but still momentarily availble in the
 			//	device list. In the case of this device, it will always be alive.
-			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyDeviceIsAlive for the device");
+			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "syfala_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyDeviceIsAlive for the device");
 			*((UInt32*)outData) = 1;
 			*outDataSize = sizeof(UInt32);
 			break;
 
 		case kAudioDevicePropertyDeviceIsRunning:
 			//	This property returns whether or not IO is running for the device
-			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyDeviceIsRunning for the device");
+			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "syfala_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyDeviceIsRunning for the device");
 			pthread_mutex_lock(&gDevice_IOMutex);
 			*((UInt32*)outData) = (gDevice_IOIsRunning > 0) ? 1 : 0;
 			pthread_mutex_unlock(&gDevice_IOMutex);
@@ -1412,7 +1408,7 @@ static OSStatus	SpaceBar_GetDevicePropertyData(
 
 		case kAudioDevicePropertyNominalSampleRate:
 			//	This property returns the nominal sample rate of the device.
-			DoIfFailed(inDataSize < sizeof(Float64), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyNominalSampleRate for the device");
+			DoIfFailed(inDataSize < sizeof(Float64), return kAudioHardwareBadPropertySizeError, "syfala_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyNominalSampleRate for the device");
 			*((Float64*)outData) = SAMPLE_RATE;
 			*outDataSize = sizeof(Float64);
 			break;
@@ -1446,7 +1442,7 @@ static OSStatus	SpaceBar_GetDevicePropertyData(
 
 		case kAudioDevicePropertyIsHidden:
 			//	This returns whether or not the device is visible to clients.
-			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyIsHidden for the device");
+			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "syfala_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyIsHidden for the device");
 			*((UInt32*)outData) = 0;
 			*outDataSize = sizeof(UInt32);
 			break;
@@ -1454,18 +1450,18 @@ static OSStatus	SpaceBar_GetDevicePropertyData(
 		case kAudioDevicePropertyZeroTimeStampPeriod:
 			//	This property returns how many frames the HAL should expect to see between
 			//	successive sample times in the zero time stamps this device provides.
-			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyZeroTimeStampPeriod for the device");
+			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "syfala_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyZeroTimeStampPeriod for the device");
 			*((UInt32*)outData) = kDevice_RingBufferSize;
 			*outDataSize = sizeof(UInt32); // TODO?
 			break;
 
 		case kAudioDevicePropertyIcon:
 			//	This is a CFURL that points to the device's Icon in the plug-in's resource bundle.
-			DoIfFailed(inDataSize < sizeof(CFURLRef), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyDeviceUID for the device");
+			DoIfFailed(inDataSize < sizeof(CFURLRef), return kAudioHardwareBadPropertySizeError, "syfala_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyDeviceUID for the device");
 			CFBundleRef theBundle = CFBundleGetBundleWithIdentifier(CFSTR(kPlugIn_BundleID));
-			DoIfFailed(theBundle == NULL, return kAudioHardwareUnspecifiedError, "SpaceBar_GetDevicePropertyData: could not get the plug-in bundle for kAudioDevicePropertyIcon");
+			DoIfFailed(theBundle == NULL, return kAudioHardwareUnspecifiedError, "syfala_GetDevicePropertyData: could not get the plug-in bundle for kAudioDevicePropertyIcon");
 			CFURLRef theURL = CFBundleCopyResourceURL(theBundle, CFSTR("DeviceIcon.icns"), NULL, NULL);
-			DoIfFailed(theURL == NULL, return kAudioHardwareUnspecifiedError, "SpaceBar_GetDevicePropertyData: could not get the URL for kAudioDevicePropertyIcon");
+			DoIfFailed(theURL == NULL, return kAudioHardwareUnspecifiedError, "syfala_GetDevicePropertyData: could not get the URL for kAudioDevicePropertyIcon");
 			*((CFURLRef*)outData) = theURL;
 			*outDataSize = sizeof(CFURLRef);
 			break;
@@ -1505,7 +1501,7 @@ static OSStatus	SpaceBar_GetDevicePropertyData(
 			//	default device for content. This is the device that iTunes and QuickTime
 			//	will use to play their content on and FaceTime will use as it's microhphone.
 			//	Nearly all devices should allow for this.
-			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyDeviceCanBeDefaultDevice for the device");
+			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "syfala_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyDeviceCanBeDefaultDevice for the device");
 			*((UInt32*)outData) = 1;
 			*outDataSize = sizeof(UInt32);
 			break;
@@ -1515,7 +1511,7 @@ static OSStatus	SpaceBar_GetDevicePropertyData(
 			//	default device. This is the device that is used to play interface sounds and
 			//	other incidental or UI-related sounds on. Most devices should allow this
 			//	although devices with lots of latency may not want to.
-			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyDeviceCanBeDefaultSystemDevice for the device");
+			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "syfala_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyDeviceCanBeDefaultSystemDevice for the device");
 			*((UInt32*)outData) = 1;
 			*outDataSize = sizeof(UInt32);
 			break;
@@ -1523,13 +1519,13 @@ static OSStatus	SpaceBar_GetDevicePropertyData(
 		case kAudioDevicePropertyLatency:
 			//	This property returns the presentation latency of the device. For this,
 			//	device, the value is 0 due to the fact that it always vends silence.
-			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyLatency for the device");
+			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "syfala_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyLatency for the device");
 			*((UInt32*)outData) = 0;
 			*outDataSize = sizeof(UInt32);
 			break;
 
 		case kAudioDevicePropertySafetyOffset:
-			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertySafetyOffset for the device");
+			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "syfala_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertySafetyOffset for the device");
 			*((UInt32*)outData) = 0;
 			*outDataSize = sizeof(UInt32);
 			break;
@@ -1540,7 +1536,7 @@ static OSStatus	SpaceBar_GetDevicePropertyData(
 
 			AudioChannelLayout* const data = (AudioChannelLayout*) outData;
 			
-			DoIfFailed(inDataSize < size, return kAudioHardwareBadPropertySizeError, "SpaceBar_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyPreferredChannelLayout for the device");
+			DoIfFailed(inDataSize < size, return kAudioHardwareBadPropertySizeError, "syfala_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyPreferredChannelLayout for the device");
 
 			data->mChannelLayoutTag = kAudioChannelLayoutTag_UseChannelDescriptions;
 			data->mChannelBitmap = 0;
@@ -1566,7 +1562,7 @@ static OSStatus	SpaceBar_GetDevicePropertyData(
 
 #pragma mark Stream Property Operations
 
-static Boolean	SpaceBar_HasStreamProperty(
+static Boolean	syfala_HasStreamProperty(
 	AudioObjectPropertyAddress const* inAddress
 ) {
 	//	This method returns whether or not the given object has the given property.
@@ -1593,7 +1589,7 @@ static Boolean	SpaceBar_HasStreamProperty(
 	return false;
 }
 
-static OSStatus	SpaceBar_IsStreamPropertySettable(
+static OSStatus	syfala_IsStreamPropertySettable(
 	AudioObjectPropertyAddress const* const inAddress,
 	Boolean* const outIsSettable
 ) {
@@ -1629,7 +1625,7 @@ static OSStatus	SpaceBar_IsStreamPropertySettable(
 	return kAudioHardwareNoError;
 }
 
-static OSStatus	SpaceBar_GetStreamPropertyDataSize(
+static OSStatus	syfala_GetStreamPropertyDataSize(
 	AudioObjectPropertyAddress const* const inAddress,
 	UInt32* const outDataSize
 ) {
@@ -1694,7 +1690,7 @@ static OSStatus	SpaceBar_GetStreamPropertyDataSize(
 	return kAudioHardwareNoError;
 }
 
-static OSStatus	SpaceBar_GetStreamPropertyData(
+static OSStatus	syfala_GetStreamPropertyData(
 	AudioObjectPropertyAddress const* const inAddress,
 	UInt32 const inDataSize,
 	UInt32* const outDataSize,
@@ -1704,21 +1700,21 @@ static OSStatus	SpaceBar_GetStreamPropertyData(
 	{
 		case kAudioObjectPropertyBaseClass:
 			//	The base class for kAudioStreamClassID is kAudioObjectClassID
-			DoIfFailed(inDataSize < sizeof(AudioClassID), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetStreamPropertyData: not enough space for the return value of kAudioObjectPropertyBaseClass for the stream");
+			DoIfFailed(inDataSize < sizeof(AudioClassID), return kAudioHardwareBadPropertySizeError, "syfala_GetStreamPropertyData: not enough space for the return value of kAudioObjectPropertyBaseClass for the stream");
 			*((AudioClassID*)outData) = kAudioObjectClassID;
 			*outDataSize = sizeof(AudioClassID);
 			break;
 			
 		case kAudioObjectPropertyClass:
 			//	The class is always kAudioStreamClassID for streams created by drivers
-			DoIfFailed(inDataSize < sizeof(AudioClassID), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetStreamPropertyData: not enough space for the return value of kAudioObjectPropertyClass for the stream");
+			DoIfFailed(inDataSize < sizeof(AudioClassID), return kAudioHardwareBadPropertySizeError, "syfala_GetStreamPropertyData: not enough space for the return value of kAudioObjectPropertyClass for the stream");
 			*((AudioClassID*)outData) = kAudioStreamClassID;
 			*outDataSize = sizeof(AudioClassID);
 			break;
 			
 		case kAudioObjectPropertyOwner:
 			//	The stream's owner is the device object
-			DoIfFailed(inDataSize < sizeof(AudioObjectID), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetStreamPropertyData: not enough space for the return value of kAudioObjectPropertyOwner for the stream");
+			DoIfFailed(inDataSize < sizeof(AudioObjectID), return kAudioHardwareBadPropertySizeError, "syfala_GetStreamPropertyData: not enough space for the return value of kAudioObjectPropertyOwner for the stream");
 			*((AudioObjectID*)outData) = DEVICE_ID;
 			*outDataSize = sizeof(AudioObjectID);
 			break;
@@ -1730,14 +1726,14 @@ static OSStatus	SpaceBar_GetStreamPropertyData(
 
 		case kAudioObjectPropertyName:
 			//	This is the human readable name of the stream
-			DoIfFailed(inDataSize < sizeof(CFStringRef), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetStreamPropertyData: not enough space for the return value of kAudioObjectPropertyName for the stream");
+			DoIfFailed(inDataSize < sizeof(CFStringRef), return kAudioHardwareBadPropertySizeError, "syfala_GetStreamPropertyData: not enough space for the return value of kAudioObjectPropertyName for the stream");
 			*((CFStringRef*)outData) = CFSTR("Output Stream");
 			*outDataSize = sizeof(CFStringRef);
 			break;
 
 		case kAudioStreamPropertyDirection:
 			//	This returns whether the stream is an input stream or an output stream.
-			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetStreamPropertyData: not enough space for the return value of kAudioStreamPropertyDirection for the stream");
+			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "syfala_GetStreamPropertyData: not enough space for the return value of kAudioStreamPropertyDirection for the stream");
 			*((UInt32*)outData) = 0;
 			*outDataSize = sizeof(UInt32);
 			break;
@@ -1746,7 +1742,7 @@ static OSStatus	SpaceBar_GetStreamPropertyData(
 			//	This returns a value that indicates what is at the other end of the stream
 			//	such as a speaker or headphones, or a microphone. Values for this property
 			//	are defined in <CoreAudio/AudioHardwareBase.h>
-			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetStreamPropertyData: not enough space for the return value of kAudioStreamPropertyTerminalType for the stream");
+			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "syfala_GetStreamPropertyData: not enough space for the return value of kAudioStreamPropertyTerminalType for the stream");
 			*((UInt32*)outData) = kAudioStreamTerminalTypeUnknown;
 			*outDataSize = sizeof(UInt32);
 			break;
@@ -1756,14 +1752,14 @@ static OSStatus	SpaceBar_GetStreamPropertyData(
 			//	the stream. For exmaple, if a device has two output streams with two
 			//	channels each, then the starting channel number for the first stream is 1
 			//	and ths starting channel number fo the second stream is 3.
-			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetStreamPropertyData: not enough space for the return value of kAudioStreamPropertyStartingChannel for the stream");
+			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "syfala_GetStreamPropertyData: not enough space for the return value of kAudioStreamPropertyStartingChannel for the stream");
 			*((UInt32*)outData) = 1;
 			*outDataSize = sizeof(UInt32);
 			break;
 
 		case kAudioStreamPropertyLatency:
 			//	This property returns any additonal presentation latency the stream has.
-			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetStreamPropertyData: not enough space for the return value of kAudioStreamPropertyStartingChannel for the stream");
+			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "syfala_GetStreamPropertyData: not enough space for the return value of kAudioStreamPropertyStartingChannel for the stream");
 			*((UInt32*)outData) = 0;
 			*outDataSize = sizeof(UInt32);
 			break;
@@ -1798,7 +1794,7 @@ static OSStatus	SpaceBar_GetStreamPropertyData(
 			//	this value.
 			//	Note that for devices that don't override the mix operation, the virtual
 			//	format has to be the same as the physical format.
-			DoIfFailed(inDataSize < sizeof(AudioStreamBasicDescription), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetStreamPropertyData: not enough space for the return value of kAudioStreamPropertyVirtualFormat for the stream");
+			DoIfFailed(inDataSize < sizeof(AudioStreamBasicDescription), return kAudioHardwareBadPropertySizeError, "syfala_GetStreamPropertyData: not enough space for the return value of kAudioStreamPropertyVirtualFormat for the stream");
 			*((AudioStreamBasicDescription*)outData) = FORMAT.mFormat;
 			*outDataSize = sizeof(AudioStreamBasicDescription);
 			break;
@@ -1807,7 +1803,7 @@ static OSStatus	SpaceBar_GetStreamPropertyData(
 			//	This property tells the device whether or not the given stream is going to
 			//	be used for IO. Note that we need to take the state lock to examine this
 			//	value.
-			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetStreamPropertyData: not enough space for the return value of kAudioStreamPropertyIsActive for the stream");
+			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "syfala_GetStreamPropertyData: not enough space for the return value of kAudioStreamPropertyIsActive for the stream");
 			*((UInt32*)outData) = atomic_load_explicit(&IS_OUTPUT_STREAM_ACTIVE, __ATOMIC_RELAXED);
 			*outDataSize = sizeof(UInt32);
 			break;
@@ -1821,7 +1817,7 @@ static OSStatus	SpaceBar_GetStreamPropertyData(
 
 #pragma mark Control Property Operations
 
-static Boolean	SpaceBar_HasControlProperty(
+static Boolean	syfala_HasControlProperty(
 	AudioObjectID const inObjectID,
 	AudioObjectPropertyAddress const* const inAddress
 ) {
@@ -1853,7 +1849,7 @@ static Boolean	SpaceBar_HasControlProperty(
 	return false;
 }
 
-static OSStatus	SpaceBar_IsControlPropertySettable(
+static OSStatus	syfala_IsControlPropertySettable(
 	AudioObjectID const inObjectID,
 	AudioObjectPropertyAddress const* const inAddress,
 	Boolean* const outIsSettable
@@ -1892,7 +1888,7 @@ static OSStatus	SpaceBar_IsControlPropertySettable(
 	return kAudioHardwareUnknownPropertyError;
 }
 
-static OSStatus	SpaceBar_GetControlPropertyDataSize(
+static OSStatus	syfala_GetControlPropertyDataSize(
 	AudioObjectID const inObjectID,
 	AudioObjectPropertyAddress const* const inAddress,
 	UInt32* const outDataSize
@@ -1955,7 +1951,7 @@ static OSStatus	SpaceBar_GetControlPropertyDataSize(
 	return kAudioHardwareUnknownPropertyError;
 }
 
-static OSStatus	SpaceBar_GetControlPropertyData(
+static OSStatus	syfala_GetControlPropertyData(
 	AudioObjectID const inObjectID,
 	AudioObjectPropertyAddress const* const inAddress,
 	UInt32 const inDataSize,
@@ -1968,7 +1964,7 @@ static OSStatus	SpaceBar_GetControlPropertyData(
 	{
 		case kAudioObjectPropertyOwner:
 			//	The control's owner is the device object
-			DoIfFailed(inDataSize < sizeof(AudioObjectID), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetControlPropertyData: not enough space for the return value of kAudioObjectPropertyOwner for the volume control");
+			DoIfFailed(inDataSize < sizeof(AudioObjectID), return kAudioHardwareBadPropertySizeError, "syfala_GetControlPropertyData: not enough space for the return value of kAudioObjectPropertyOwner for the volume control");
 			*((AudioObjectID*)outData) = DEVICE_ID;
 			*outDataSize = sizeof(AudioObjectID);
 			return kAudioHardwareNoError;
@@ -1980,14 +1976,14 @@ static OSStatus	SpaceBar_GetControlPropertyData(
 
 		case kAudioControlPropertyScope:
 			//	This property returns the scope that the control is attached to.
-			DoIfFailed(inDataSize < sizeof(AudioObjectPropertyScope), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetControlPropertyData: not enough space for the return value of kAudioControlPropertyScope for the volume control");
+			DoIfFailed(inDataSize < sizeof(AudioObjectPropertyScope), return kAudioHardwareBadPropertySizeError, "syfala_GetControlPropertyData: not enough space for the return value of kAudioControlPropertyScope for the volume control");
 			*((AudioObjectPropertyScope*)outData) = kAudioObjectPropertyScopeOutput;
 			*outDataSize = sizeof(AudioObjectPropertyScope);
 			return kAudioHardwareNoError;
 
 		case kAudioControlPropertyElement:
 			//	This property returns the element that the control is attached to.
-			DoIfFailed(inDataSize < sizeof(AudioObjectPropertyElement), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetControlPropertyData: not enough space for the return value of kAudioControlPropertyElement for the volume control");
+			DoIfFailed(inDataSize < sizeof(AudioObjectPropertyElement), return kAudioHardwareBadPropertySizeError, "syfala_GetControlPropertyData: not enough space for the return value of kAudioControlPropertyElement for the volume control");
 			*((AudioObjectPropertyElement*)outData) = ctrl_index;
 			*outDataSize = sizeof(AudioObjectPropertyElement);
 			return kAudioHardwareNoError;
@@ -2005,21 +2001,21 @@ static OSStatus	SpaceBar_GetControlPropertyData(
 		{
 			case kAudioObjectPropertyBaseClass:
 				//	The base class for kAudioVolumeControlClassID is kAudioLevelControlClassID
-				DoIfFailed(inDataSize < sizeof(AudioClassID), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetControlPropertyData: not enough space for the return value of kAudioObjectPropertyBaseClass for the volume control");
+				DoIfFailed(inDataSize < sizeof(AudioClassID), return kAudioHardwareBadPropertySizeError, "syfala_GetControlPropertyData: not enough space for the return value of kAudioObjectPropertyBaseClass for the volume control");
 				*((AudioClassID*)outData) = kAudioLevelControlClassID;
 				*outDataSize = sizeof(AudioClassID);
 				return kAudioHardwareNoError;
 
 			case kAudioObjectPropertyClass:
 				//	Volume controls are of the class, kAudioVolumeControlClassID
-				DoIfFailed(inDataSize < sizeof(AudioClassID), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetControlPropertyData: not enough space for the return value of kAudioObjectPropertyClass for the volume control");
+				DoIfFailed(inDataSize < sizeof(AudioClassID), return kAudioHardwareBadPropertySizeError, "syfala_GetControlPropertyData: not enough space for the return value of kAudioObjectPropertyClass for the volume control");
 				*((AudioClassID*)outData) = kAudioVolumeControlClassID;
 				*outDataSize = sizeof(AudioClassID);
 				return kAudioHardwareNoError;
 			
 			case kAudioLevelControlPropertyScalarValue: {
 				//	This returns the value of the control in the normalized range of 0 to 1.
-				DoIfFailed(inDataSize < sizeof(Float32), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetControlPropertyData: not enough space for the return value of kAudioLevelControlPropertyScalarValue for the volume control");
+				DoIfFailed(inDataSize < sizeof(Float32), return kAudioHardwareBadPropertySizeError, "syfala_GetControlPropertyData: not enough space for the return value of kAudioLevelControlPropertyScalarValue for the volume control");
 				Float32 const gain = atomic_load_explicit(&OUTPUT_VOLUME[ctrl_index], __ATOMIC_RELAXED);
 				Float32 const db = gain_to_db(gain);
 				Float32 const db_clamped = fminf(fmaxf(db, VOL_MIN_DB), VOL_MAX_DB);
@@ -2031,7 +2027,7 @@ static OSStatus	SpaceBar_GetControlPropertyData(
 
 			case kAudioLevelControlPropertyDecibelValue: {
 				//	This returns the dB value of the control.
-				DoIfFailed(inDataSize < sizeof(Float32), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetControlPropertyData: not enough space for the return value of kAudioLevelControlPropertyDecibelValue for the volume control");
+				DoIfFailed(inDataSize < sizeof(Float32), return kAudioHardwareBadPropertySizeError, "syfala_GetControlPropertyData: not enough space for the return value of kAudioLevelControlPropertyDecibelValue for the volume control");
 
 				Float32 const gain = atomic_load_explicit(&OUTPUT_VOLUME[ctrl_index], __ATOMIC_RELAXED);
 				Float32 const db = gain_to_db(gain);
@@ -2045,7 +2041,7 @@ static OSStatus	SpaceBar_GetControlPropertyData(
 
 			case kAudioLevelControlPropertyDecibelRange: {
 				//	This returns the dB range of the control.
-				DoIfFailed(inDataSize < sizeof(AudioValueRange), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetControlPropertyData: not enough space for the return value of kAudioLevelControlPropertyDecibelRange for the volume control");
+				DoIfFailed(inDataSize < sizeof(AudioValueRange), return kAudioHardwareBadPropertySizeError, "syfala_GetControlPropertyData: not enough space for the return value of kAudioLevelControlPropertyDecibelRange for the volume control");
 
 				AudioValueRange* const data = (AudioValueRange*) outData;
 
@@ -2057,7 +2053,7 @@ static OSStatus	SpaceBar_GetControlPropertyData(
 
 			case kAudioLevelControlPropertyConvertScalarToDecibels: {
 				//	This takes the scalar value in outData and converts it to dB.
-				DoIfFailed(inDataSize < sizeof(Float32), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetControlPropertyData: not enough space for the return value of kAudioLevelControlPropertyDecibelValue for the volume control");
+				DoIfFailed(inDataSize < sizeof(Float32), return kAudioHardwareBadPropertySizeError, "syfala_GetControlPropertyData: not enough space for the return value of kAudioLevelControlPropertyDecibelValue for the volume control");
 
 				Float32* const data = (Float32*) outData;
 
@@ -2071,7 +2067,7 @@ static OSStatus	SpaceBar_GetControlPropertyData(
 			}
 
 			case kAudioLevelControlPropertyConvertDecibelsToScalar: {
-				DoIfFailed(inDataSize < sizeof(Float32), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetControlPropertyData: not enough space for the return value of kAudioLevelControlPropertyScalarValue for the volume control");
+				DoIfFailed(inDataSize < sizeof(Float32), return kAudioHardwareBadPropertySizeError, "syfala_GetControlPropertyData: not enough space for the return value of kAudioLevelControlPropertyScalarValue for the volume control");
 				//	This takes the dB value in outData and converts it to scalar.
 				Float32* const data = (Float32*) outData;
 
@@ -2090,14 +2086,14 @@ static OSStatus	SpaceBar_GetControlPropertyData(
 		{
 			case kAudioObjectPropertyBaseClass:
 				//	The base class for kAudioMuteControlClassID is kAudioBooleanControlClassID
-				DoIfFailed(inDataSize < sizeof(AudioClassID), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetControlPropertyData: not enough space for the return value of kAudioObjectPropertyBaseClass for the mute control");
+				DoIfFailed(inDataSize < sizeof(AudioClassID), return kAudioHardwareBadPropertySizeError, "syfala_GetControlPropertyData: not enough space for the return value of kAudioObjectPropertyBaseClass for the mute control");
 				*((AudioClassID*)outData) = kAudioBooleanControlClassID;
 				*outDataSize = sizeof(AudioClassID);
 				return kAudioHardwareNoError;
 				
 			case kAudioObjectPropertyClass:
 				//	Mute controls are of the class, kAudioMuteControlClassID
-				DoIfFailed(inDataSize < sizeof(AudioClassID), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetControlPropertyData: not enough space for the return value of kAudioObjectPropertyClass for the mute control");
+				DoIfFailed(inDataSize < sizeof(AudioClassID), return kAudioHardwareBadPropertySizeError, "syfala_GetControlPropertyData: not enough space for the return value of kAudioObjectPropertyClass for the mute control");
 				*((AudioClassID*)outData) = kAudioMuteControlClassID;
 				*outDataSize = sizeof(AudioClassID);
 				return kAudioHardwareNoError;
@@ -2106,7 +2102,7 @@ static OSStatus	SpaceBar_GetControlPropertyData(
 				//	This returns the value of the mute control where 0 means that mute is off
 				//	and audio can be heard and 1 means that mute is on and audio cannot be heard.
 				//	Note that we need to take the state lock to examine this value.
-				DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "SpaceBar_GetControlPropertyData: not enough space for the return value of kAudioBooleanControlPropertyValue for the mute control");
+				DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "syfala_GetControlPropertyData: not enough space for the return value of kAudioBooleanControlPropertyValue for the mute control");
 				*((UInt32*)outData) = (UInt32) atomic_load_explicit(&OUTPUT_MUTE[ctrl_index], __ATOMIC_RELAXED);
 				*outDataSize = sizeof(UInt32);
 				return kAudioHardwareNoError;
@@ -2116,7 +2112,7 @@ static OSStatus	SpaceBar_GetControlPropertyData(
 	return kAudioHardwareUnknownPropertyError;
 }
 
-static OSStatus	SpaceBar_SetControlPropertyData(
+static OSStatus	syfala_SetControlPropertyData(
 	AudioObjectID const inObjectID,
 	AudioObjectPropertyAddress const* const inAddress,
 	UInt32 const inDataSize,
@@ -2132,7 +2128,7 @@ static OSStatus	SpaceBar_SetControlPropertyData(
 	if (control_is_volume(inObjectID)) {
 		if (inAddress->mSelector == kAudioLevelControlPropertyScalarValue) {
 			// Note that if this value changes, it is implied that the dB value changed too.
-			DoIfFailed(inDataSize != sizeof(Float32), return kAudioHardwareBadPropertySizeError, "SpaceBar_SetControlPropertyData: wrong size for the data for kAudioLevelControlPropertyScalarValue");
+			DoIfFailed(inDataSize != sizeof(Float32), return kAudioHardwareBadPropertySizeError, "syfala_SetControlPropertyData: wrong size for the data for kAudioLevelControlPropertyScalarValue");
 
 			Float32 const new_vol_norm = sqrtf(fminf(fmaxf(*((Float32 const*)inData), 0.0f), 1.0f));
 			Float32 const new_vol_db = linear_remap(new_vol_norm, 0.0f, 1.0f, VOL_MIN_DB, VOL_DB_RANGE);
@@ -2156,7 +2152,7 @@ static OSStatus	SpaceBar_SetControlPropertyData(
 
 		} else if (inAddress->mSelector == kAudioLevelControlPropertyDecibelValue) {
 			//	Note that if this value changes, it is implied that the scalar value changes as well.
-			DoIfFailed(inDataSize != sizeof(Float32), return kAudioHardwareBadPropertySizeError, "SpaceBar_SetControlPropertyData: wrong size for the data for kAudioLevelControlPropertyScalarValue");
+			DoIfFailed(inDataSize != sizeof(Float32), return kAudioHardwareBadPropertySizeError, "syfala_SetControlPropertyData: wrong size for the data for kAudioLevelControlPropertyScalarValue");
 			
 			Float32 const new_vol_db = fminf(fmaxf(*((const Float32*)inData), VOL_MIN_DB), VOL_MAX_DB);
 			Float32 const new_vol_gain = db_to_gain(new_vol_db);
@@ -2181,7 +2177,7 @@ static OSStatus	SpaceBar_SetControlPropertyData(
 		return kAudioHardwareUnknownPropertyError;
 	} else {
 		if (inAddress->mSelector ==  kAudioBooleanControlPropertyValue) {
-			DoIfFailed(inDataSize != sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "SpaceBar_SetControlPropertyData: wrong size for the data for kAudioBooleanControlPropertyValue");
+			DoIfFailed(inDataSize != sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "syfala_SetControlPropertyData: wrong size for the data for kAudioBooleanControlPropertyValue");
 
 			atomic_store_explicit(&OUTPUT_MUTE[ctrl_index], *((const UInt32*)inData) != 0, __ATOMIC_RELAXED);
 
@@ -2201,7 +2197,7 @@ static OSStatus	SpaceBar_SetControlPropertyData(
 
 #pragma mark IO Operations
 
-static OSStatus	SpaceBar_StartIO(
+static OSStatus	syfala_StartIO(
 	AudioServerPlugInDriverRef const inDriver,
 	AudioObjectID const inDeviceObjectID,
 	UInt32 const inClientID
@@ -2217,8 +2213,8 @@ static OSStatus	SpaceBar_StartIO(
 	#pragma unused(inClientID)
 
 	// check args
-	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "SpaceBar_StartIO: bad driver reference");
-	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "SpaceBar_StartIO: bad device ID");
+	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_StartIO: bad driver reference");
+	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "syfala_StartIO: bad device ID");
 
 	//	we need to hold the state lock
 	pthread_mutex_lock(&gDevice_IOMutex);
@@ -2244,7 +2240,7 @@ static OSStatus	SpaceBar_StartIO(
 	return kAudioHardwareNoError;
 }
 
-static OSStatus	SpaceBar_StopIO(
+static OSStatus	syfala_StopIO(
 	AudioServerPlugInDriverRef const inDriver,
 	AudioObjectID const inDeviceObjectID,
 	UInt32 const inClientID
@@ -2257,8 +2253,8 @@ static OSStatus	SpaceBar_StopIO(
 	#pragma unused(inClientID)
 
 	// check args
-	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "SpaceBar_StopIO: bad driver reference");
-	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "SpaceBar_StopIO: bad device ID");
+	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_StopIO: bad driver reference");
+	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "syfala_StopIO: bad device ID");
 
 	//	we need to hold the state lock
 	pthread_mutex_lock(&gDevice_IOMutex);
@@ -2281,7 +2277,7 @@ static OSStatus	SpaceBar_StopIO(
 	return kAudioHardwareNoError;
 }
 
-static OSStatus	SpaceBar_GetZeroTimeStamp(
+static OSStatus	syfala_GetZeroTimeStamp(
 	AudioServerPlugInDriverRef const inDriver,
 	AudioObjectID const inDeviceObjectID,
 	UInt32 const inClientID,
@@ -2302,23 +2298,20 @@ static OSStatus	SpaceBar_GetZeroTimeStamp(
 	
 	#pragma unused(inClientID)
 	
-	//	declare the local variables
-	OSStatus theAnswer = 0;
-	
 	// check args
-	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "SpaceBar_GetZeroTimeStamp: bad driver reference");
-	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "SpaceBar_GetZeroTimeStamp: bad device ID");
+	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_GetZeroTimeStamp: bad driver reference");
+	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "syfala_GetZeroTimeStamp: bad device ID");
 
 	//	we need to hold the locks
 	pthread_mutex_lock(&gDevice_IOMutex);
 	
 	//	get the current host time
-	UInt64 theCurrentHostTime = mach_absolute_time();
+	UInt64 const theCurrentHostTime = mach_absolute_time();
 	
 	//	calculate the next host time
-	Float64 theHostTicksPerRingBuffer = gDevice_HostTicksPerFrame * ((Float64)kDevice_RingBufferSize);
-	Float64 theHostTickOffset = ((Float64)(gDevice_NumberTimeStamps + 1)) * theHostTicksPerRingBuffer;
-	UInt64 theNextHostTime = gDevice_AnchorHostTime + ((UInt64)theHostTickOffset);
+	Float64 const theHostTicksPerRingBuffer = gDevice_HostTicksPerFrame * ((Float64)kDevice_RingBufferSize);
+	Float64 const theHostTickOffset = ((Float64)(gDevice_NumberTimeStamps + 1)) * theHostTicksPerRingBuffer;
+	UInt64 const theNextHostTime = gDevice_AnchorHostTime + ((UInt64)theHostTickOffset);
 	
 	//	go to the next time if the next host time is less than the current time
 	if(theNextHostTime <= theCurrentHostTime) ++gDevice_NumberTimeStamps;
@@ -2334,7 +2327,7 @@ static OSStatus	SpaceBar_GetZeroTimeStamp(
 	return kAudioHardwareNoError;
 }
 
-static OSStatus	SpaceBar_WillDoIOOperation(
+static OSStatus	syfala_WillDoIOOperation(
 	AudioServerPlugInDriverRef const inDriver,
 	AudioObjectID const inDeviceObjectID,
 	UInt32 const inClientID,
@@ -2350,8 +2343,8 @@ static OSStatus	SpaceBar_WillDoIOOperation(
 	#pragma unused(inClientID)
 	
 	// check args
-	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "SpaceBar_WillDoIOOperation: bad driver reference");
-	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "SpaceBar_WillDoIOOperation: bad device ID");
+	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_WillDoIOOperation: bad driver reference");
+	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "syfala_WillDoIOOperation: bad device ID");
 
 	//	figure out if we support the operation
 	bool willDo = false;
@@ -2368,7 +2361,7 @@ static OSStatus	SpaceBar_WillDoIOOperation(
 	return kAudioHardwareNoError;
 }
 
-static OSStatus	SpaceBar_BeginIOOperation(
+static OSStatus	syfala_BeginIOOperation(
 	AudioServerPlugInDriverRef const inDriver,
 	AudioObjectID const inDeviceObjectID,
 	UInt32 const inClientID,
@@ -2376,7 +2369,7 @@ static OSStatus	SpaceBar_BeginIOOperation(
 	UInt32 const inIOBufferFrameSize,
 	AudioServerPlugInIOCycleInfo const* const inIOCycleInfo
 ) {	
-	//	This is called at the beginning of an IO operation. This device doesn't do anything, so just
+	//This is called at the beginning of an IO operation. This device doesn't do anything, so just
 	// check args and return.
 
 	DebugMsg("BeginIOOperation");
@@ -2384,13 +2377,13 @@ static OSStatus	SpaceBar_BeginIOOperation(
 	#pragma unused(inClientID, inOperationID, inIOBufferFrameSize, inIOCycleInfo)
 	
 	// check args
-	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "SpaceBar_BeginIOOperation: bad driver reference");
-	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "SpaceBar_BeginIOOperation: bad device ID");
+	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_BeginIOOperation: bad driver reference");
+	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "syfala_BeginIOOperation: bad device ID");
 
 	return kAudioHardwareNoError;
 }
 
-static OSStatus	SpaceBar_DoIOOperation(
+static OSStatus	syfala_DoIOOperation(
 	AudioServerPlugInDriverRef const inDriver,
 	AudioObjectID const inDeviceObjectID,
 	AudioObjectID const inStreamObjectID,
@@ -2409,16 +2402,16 @@ static OSStatus	SpaceBar_DoIOOperation(
 	#pragma unused(inClientID, inIOCycleInfo, ioSecondaryBuffer)
 	
 	// check args
-	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "SpaceBar_DoIOOperation: bad driver reference");
-	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "SpaceBar_DoIOOperation: bad device ID");
-	DoIfFailed(inStreamObjectID != STREAM_ID, return kAudioHardwareBadObjectError, "SpaceBar_DoIOOperation: bad stream ID");
+	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_DoIOOperation: bad driver reference");
+	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "syfala_DoIOOperation: bad device ID");
+	DoIfFailed(inStreamObjectID != STREAM_ID, return kAudioHardwareBadObjectError, "syfala_DoIOOperation: bad stream ID");
 
 	if(inOperationID == kAudioServerPlugInIOOperationWriteMix) {}
 
 	return kAudioHardwareNoError;
 }
 
-static OSStatus	SpaceBar_EndIOOperation(
+static OSStatus	syfala_EndIOOperation(
 	AudioServerPlugInDriverRef const inDriver,
 	AudioObjectID const inDeviceObjectID,
 	UInt32 const inClientID,
@@ -2433,8 +2426,8 @@ static OSStatus	SpaceBar_EndIOOperation(
 	#pragma unused(inClientID, inOperationID, inIOBufferFrameSize, inIOCycleInfo)
 	
 	// check args
-	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "SpaceBar_EndIOOperation: bad driver reference");
-	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "SpaceBar_EndIOOperation: bad device ID");
+	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_EndIOOperation: bad driver reference");
+	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "syfala_EndIOOperation: bad device ID");
 
 	return kAudioHardwareNoError;
 }

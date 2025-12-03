@@ -5,5 +5,7 @@ edition = "2024"
 
 [dependencies]
 
+rtrb = "0.3"
+
 [lib]
 crate-type = ["staticlib"]
