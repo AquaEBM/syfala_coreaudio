@@ -1124,8 +1124,8 @@ fn syfala_get_plug_in_property_data_size(selector: AudioObjectPropertySelector) 
 /// Some(Some(n)): kAudioHardwareNoError,
 unsafe fn syfala_get_plug_in_property_data(
     selector: AudioObjectPropertySelector,
-    qualifier_data_size: UInt32,
-    qualifier_data: *const std::os::raw::c_void,
+    _qualifier_data_size: UInt32,
+    _qualifier_data: *const std::os::raw::c_void,
     data_size: UInt32,
     out_data: *mut std::os::raw::c_void,
 ) -> Option<Option<UInt32>> {
@@ -1157,26 +1157,26 @@ unsafe fn syfala_get_plug_in_property_data(
             ptr::write(out_data.cast(), cfstr("GRAME CNCM"))
         },
 
-        // The plugin owns only 1 object, which is the device. So, handle these two cases the same way
-        kAudioObjectPropertyOwnedObjects
-        | kAudioPlugInPropertyDeviceList => {
-        	//	Calculate the number of items that have been requested. Note that this
-        	//	number is allowed to be smaller than the actual size of the list. In such
-        	//	case, only that number of items will be returned
-        	UInt32 const n_items = inDataSize / sizeof(AudioObjectID);
-        	//	Clamp that to the number of devices this driver implements (which is just 1)
-        	UInt32 const n_items_clamped = (n_items > 1) ? 1 : n_items;
+        // // The plugin owns only 1 object, which is the device. So, handle these two cases the same way
+        // kAudioObjectPropertyOwnedObjects
+        // | kAudioPlugInPropertyDeviceList => {
+        // 	//	Calculate the number of items that have been requested. Note that this
+        // 	//	number is allowed to be smaller than the actual size of the list. In such
+        // 	//	case, only that number of items will be returned
+        // 	UInt32 const n_items = inDataSize / sizeof(AudioObjectID);
+        // 	//	Clamp that to the number of devices this driver implements (which is just 1)
+        // 	UInt32 const n_items_clamped = (n_items > 1) ? 1 : n_items;
 
-        	AudioObjectID* const data = (AudioObjectID*) out_data;
+        // 	AudioObjectID* const data = (AudioObjectID*) out_data;
 
-        	UInt32 index = 0;
+        // 	UInt32 index = 0;
 
-        	if(index < n_items_clamped) data[index++] = DEVICE_ID;
+        // 	if(index < n_items_clamped) data[index++] = DEVICE_ID;
 
-        	//	Return how many bytes we wrote to
-        	*outDataSize = n_items_clamped * sizeof(AudioObjectID);
-        	break;
-        },
+        // 	//	Return how many bytes we wrote to
+        // 	*outDataSize = n_items_clamped * sizeof(AudioObjectID);
+        // 	break;
+        // },
 
         // kAudioPlugInPropertyTranslateUIDToDevice => {
         // 	//	This property takes the CFString passed in the qualifier and converts that
