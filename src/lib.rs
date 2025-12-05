@@ -1,4 +1,7 @@
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::{
+    mem, ptr,
+    sync::atomic::{AtomicBool, AtomicU32, Ordering},
+};
 use std::sync::Mutex;
 
 use atomic_float::AtomicF32;
@@ -110,16 +113,16 @@ fn linear_remap(
 
 // Increment an atomic counter, saturating at numerical limits
 #[inline(always)]
-fn saturating_refount_inc(i: &AtomicU32) -> bool {
+fn saturating_refount_inc(i: &AtomicU32) -> u32 {
     let mut old = i.load(Ordering::Relaxed);
     loop {
         let Some(new) = old.checked_add(1) else {
-            return false;
+            return old;
         };
 
         let Err(changed) = i.compare_exchange_weak(old, new, Ordering::Relaxed, Ordering::Relaxed)
         else {
-            return true;
+            return old;
         };
 
         old = changed;
@@ -128,65 +131,221 @@ fn saturating_refount_inc(i: &AtomicU32) -> bool {
 
 // Decrement an atomic counter, saturating at numerical limits
 #[inline(always)]
-fn saturating_refount_dec(i: &AtomicU32) -> bool {
+fn saturating_refount_dec(i: &AtomicU32) -> u32 {
     let mut old = i.load(Ordering::Relaxed);
     loop {
         let Some(new) = old.checked_sub(1) else {
-            return false;
+            break;
         };
 
         let Err(changed) = i.compare_exchange_weak(old, new, Ordering::Relaxed, Ordering::Relaxed)
         else {
-            return true;
+            break;
         };
 
         old = changed;
     }
+    old
 }
 
-static HOST: Option<&AudioServerPlugInHostInterface> = None;
+static mut HOST: Option<&AudioServerPlugInHostInterface> = None;
 
-#[repr(transparent)]
-struct SyncInterface(AudioServerPlugInDriverInterface);
+// We redefine the driver interface from the coreaudio bindings because the generated one isn't
+// Sync (can't be put in statics), because of the _reserved field (raw pointer). so we redefine
+// it and unsafe impl Sync {}
 
-impl SyncInterface {
-    #[inline(always)]
-    const fn inner(&self) -> &AudioServerPlugInDriverInterface {
-        &self.0
-    }
+#[repr(C)]
+pub struct AudioServerPlugInDriverInterface {
+    pub _reserved: *mut std::os::raw::c_void,
+    pub query_interface:
+        Option<unsafe extern "C" fn(*mut std::os::raw::c_void, REFIID, *mut LPVOID) -> HRESULT>,
+    pub add_ref: Option<unsafe extern "C" fn(*mut std::os::raw::c_void) -> ULONG>,
+    pub release: Option<unsafe extern "C" fn(*mut std::os::raw::c_void) -> ULONG>,
+    pub initialize: Option<
+        unsafe extern "C" fn(AudioServerPlugInDriverRef, AudioServerPlugInHostRef) -> OSStatus,
+    >,
+    pub create_device: Option<
+        unsafe extern "C" fn(
+            AudioServerPlugInDriverRef,
+            CFDictionaryRef,
+            *const AudioServerPlugInClientInfo,
+            *mut AudioObjectID,
+        ) -> OSStatus,
+    >,
+    pub destroy_device:
+        Option<unsafe extern "C" fn(AudioServerPlugInDriverRef, AudioObjectID) -> OSStatus>,
+    pub add_device_client: Option<
+        unsafe extern "C" fn(
+            AudioServerPlugInDriverRef,
+            AudioObjectID,
+            *const AudioServerPlugInClientInfo,
+        ) -> OSStatus,
+    >,
+    pub remove_device_client: Option<
+        unsafe extern "C" fn(
+            AudioServerPlugInDriverRef,
+            AudioObjectID,
+            *const AudioServerPlugInClientInfo,
+        ) -> OSStatus,
+    >,
+    pub perform_device_configuration_change: Option<
+        unsafe extern "C" fn(
+            AudioServerPlugInDriverRef,
+            AudioObjectID,
+            UInt64,
+            *mut std::os::raw::c_void,
+        ) -> OSStatus,
+    >,
+    pub abort_device_configuration_change: Option<
+        unsafe extern "C" fn(
+            AudioServerPlugInDriverRef,
+            AudioObjectID,
+            UInt64,
+            *mut std::os::raw::c_void,
+        ) -> OSStatus,
+    >,
+    pub has_property: Option<
+        unsafe extern "C" fn(
+            AudioServerPlugInDriverRef,
+            AudioObjectID,
+            pid_t,
+            *const AudioObjectPropertyAddress,
+        ) -> Boolean,
+    >,
+    pub is_property_settable: Option<
+        unsafe extern "C" fn(
+            AudioServerPlugInDriverRef,
+            AudioObjectID,
+            pid_t,
+            *const AudioObjectPropertyAddress,
+            *mut Boolean,
+        ) -> OSStatus,
+    >,
+    pub get_property_data_size: Option<
+        unsafe extern "C" fn(
+            AudioServerPlugInDriverRef,
+            AudioObjectID,
+            pid_t,
+            *const AudioObjectPropertyAddress,
+            UInt32,
+            *const std::os::raw::c_void,
+            *mut UInt32,
+        ) -> OSStatus,
+    >,
+    pub get_property_data: Option<
+        unsafe extern "C" fn(
+            AudioServerPlugInDriverRef,
+            AudioObjectID,
+            pid_t,
+            *const AudioObjectPropertyAddress,
+            UInt32,
+            *const std::os::raw::c_void,
+            UInt32,
+            *mut UInt32,
+            *mut std::os::raw::c_void,
+        ) -> OSStatus,
+    >,
+    pub set_property_data: Option<
+        unsafe extern "C" fn(
+            AudioServerPlugInDriverRef,
+            AudioObjectID,
+            pid_t,
+            *const AudioObjectPropertyAddress,
+            UInt32,
+            *const std::os::raw::c_void,
+            UInt32,
+            *const std::os::raw::c_void,
+        ) -> OSStatus,
+    >,
+    pub start_io:
+        Option<unsafe extern "C" fn(AudioServerPlugInDriverRef, AudioObjectID, UInt32) -> OSStatus>,
+    pub stop_io:
+        Option<unsafe extern "C" fn(AudioServerPlugInDriverRef, AudioObjectID, UInt32) -> OSStatus>,
+    pub get_zero_time_stamp: Option<
+        unsafe extern "C" fn(
+            AudioServerPlugInDriverRef,
+            AudioObjectID,
+            UInt32,
+            *mut Float64,
+            *mut UInt64,
+            *mut UInt64,
+        ) -> OSStatus,
+    >,
+    pub will_do_iooperation: Option<
+        unsafe extern "C" fn(
+            AudioServerPlugInDriverRef,
+            AudioObjectID,
+            UInt32,
+            UInt32,
+            *mut Boolean,
+            *mut Boolean,
+        ) -> OSStatus,
+    >,
+    pub begin_iooperation: Option<
+        unsafe extern "C" fn(
+            AudioServerPlugInDriverRef,
+            AudioObjectID,
+            UInt32,
+            UInt32,
+            UInt32,
+            *const AudioServerPlugInIOCycleInfo,
+        ) -> OSStatus,
+    >,
+    pub do_iooperation: Option<
+        unsafe extern "C" fn(
+            AudioServerPlugInDriverRef,
+            AudioObjectID,
+            AudioObjectID,
+            UInt32,
+            UInt32,
+            UInt32,
+            *const AudioServerPlugInIOCycleInfo,
+            *mut std::os::raw::c_void,
+            *mut std::os::raw::c_void,
+        ) -> OSStatus,
+    >,
+    pub end_iooperation: Option<
+        unsafe extern "C" fn(
+            AudioServerPlugInDriverRef,
+            AudioObjectID,
+            UInt32,
+            UInt32,
+            UInt32,
+            *const AudioServerPlugInIOCycleInfo,
+        ) -> OSStatus,
+    >,
 }
 
-// SAFETY: only used here, because it is never accessed (by us, only the HAL)
-unsafe impl Sync for SyncInterface {}
+unsafe impl Sync for AudioServerPlugInDriverInterface {}
 
 // All of the plugin's methods are exposed through this struct, which we return a reference to in the factory function
-static DRIVER_INTERFACE: SyncInterface = SyncInterface(AudioServerPlugInDriverInterface {
+static DRIVER_INTERFACE: AudioServerPlugInDriverInterface = AudioServerPlugInDriverInterface {
     _reserved: core::ptr::null_mut(),
-    QueryInterface: syfala_query_interface,
-    AddRef: syfala_add_ref,
-    Release: syfala_release,
-    Initialize: syfala_initialize,
-    CreateDevice: syfala_create_device,
-    DestroyDevice: syfala_destroy_device,
-    AddDeviceClient: syfala_add_device_client,
-    RemoveDeviceClient: syfala_remove_device_client,
-    PerformDeviceConfigurationChange: syfala_perform_device_configuration_change,
-    AbortDeviceConfigurationChange: syfala_AbortDeviceConfigurationChange,
-    HasProperty: syfala_HasProperty,
-    IsPropertySettable: syfala_IsPropertySettable,
-    GetPropertyDataSize: syfala_GetPropertyDataSize,
-    GetPropertyData: syfala_GetPropertyData,
-    SetPropertyData: syfala_SetPropertyData,
-    StartIO: syfala_StartIO,
-    StopIO: syfala_StopIO,
-    GetZeroTimeStamp: syfala_GetZeroTimeStamp,
-    WillDoIOOperation: syfala_WillDoIOOperation,
-    BeginIOOperation: syfala_BeginIOOperation,
-    DoIOOperation: syfala_DoIOOperation,
-    EndIOOperation: syfala_EndIOOperation,
-});
+    query_interface: Some(syfala_query_interface),
+    add_ref: Some(syfala_add_ref),
+    release: Some(syfala_release),
+    initialize: Some(syfala_initialize),
+    create_device: Some(syfala_create_device),
+    destroy_device: Some(syfala_destroy_device),
+    add_device_client: Some(syfala_add_device_client),
+    remove_device_client: Some(syfala_remove_device_client),
+    perform_device_configuration_change: Some(syfala_perform_device_configuration_change),
+    abort_device_configuration_change: Some(syfala_abort_device_configuration_change),
+    has_property: Some(syfala_HasProperty),
+    is_property_settable: Some(syfala_IsPropertySettable),
+    get_property_data_size: Some(syfala_GetPropertyDataSize),
+    get_property_data: Some(syfala_GetPropertyData),
+    set_property_data: Some(syfala_SetPropertyData),
+    start_io: Some(syfala_StartIO),
+    stop_io: Some(syfala_StopIO),
+    get_zero_time_stamp: Some(syfala_GetZeroTimeStamp),
+    will_do_iooperation: Some(syfala_WillDoIOOperation),
+    begin_iooperation: Some(syfala_BeginIOOperation),
+    do_iooperation: Some(syfala_DoIOOperation),
+    end_iooperation: Some(syfala_EndIOOperation),
+};
 
-static DRIVER_OBJECT: &SyncInterface = &DRIVER_INTERFACE;
+static DRIVER_OBJECT: &AudioServerPlugInDriverInterface = &DRIVER_INTERFACE;
 
 const PLUGIN_BUNDLE_ID: &str = "com.emeraude.syfala_coreaudio";
 
@@ -224,8 +383,8 @@ static OUTPUT_VOLUME: [AtomicF32; N_CHANNELS.strict_add(1) as usize] =
 static OUTPUT_MUTE: [AtomicBool; N_CHANNELS.strict_add(1) as usize] =
     [const { AtomicBool::new(false) }; _];
 
-// These IDs are defined as macros in the coreaudio header, bindgen didn't generate them
-// so we do it ourselves
+// These IDs are defined as macros in the coreaudio headers, bindgen can't generate them so we do
+// it ourselves. We also can't use constants sincee they are created using extern functions
 
 // kAudioServerPlugInTypeUUID
 #[inline(always)]
@@ -308,10 +467,22 @@ fn asp_driver_interface_type_uuid_macro() -> CFUUIDRef {
     }
 }
 
-// This is the only function exposed by the library, It's name must be indicated in the CFPlugInFactories field
-// the bundle's Info.plist file
+#[inline(always)]
+fn cfstr(str: &'static str) -> CFStringRef {
+    unsafe { __CFStringMakeConstantString(str.as_ptr().cast()) }
+}
 
-fn syfala_create(
+#[inline(always)]
+const fn raw_driver_ptr() -> *mut std::os::raw::c_void {
+    (&DRIVER_OBJECT as *const &AudioServerPlugInDriverInterface)
+        .cast_mut()
+        .cast()
+}
+
+// This is the only function exported as a symbol by the library, It's name must be indicated in
+// the CFPlugInFactories field the bundle's Info.plist file.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn syfala_create(
     _in_allocator: CFAllocatorRef,
     in_requested_type_uuid: CFUUIDRef,
 ) -> *mut std::os::raw::c_void {
@@ -336,13 +507,29 @@ fn syfala_create(
     // SAFETY: arguments are valid
     if unsafe { CFEqual(in_requested_type_uuid.cast(), asp_type_uuid.cast()) } != 0 {
         log::debug!("HAL Plug-In Interface Requested");
-        ret = &DRIVER_OBJECT as *const _ as _;
+        ret = raw_driver_ptr();
     }
     ret
 }
 
-fn syfala_query_interface(
-    in_driver: *mut std::os::raw::c_void,
+#[inline(always)]
+fn eq_driver_ptr(driver: *const std::os::raw::c_void) -> bool {
+    ptr::eq(driver, raw_driver_ptr())
+}
+
+#[inline(always)]
+const fn cfuuid_as_bytes(uuid: &CFUUIDBytes) -> &[u8; 16] {
+    // SAFETY: CFUUIDBytes has the same layout as [u8 ; 16] (#[repr(C)])
+    // lifetimes are correctly inferred
+    unsafe { mem::transmute(uuid) }
+}
+
+// another macro we have to redefine
+// E_NOINTERFACE
+const E_NOINTERFACE: HRESULT = 0x80000004;
+
+unsafe extern "C" fn syfala_query_interface(
+    driver: *mut std::os::raw::c_void,
     in_uuid: REFIID,
     out_interface: *mut LPVOID,
 ) -> HRESULT {
@@ -357,234 +544,264 @@ fn syfala_query_interface(
     let i_unknown_uuid = i_unknown_uuid_macro();
     let asp_driver_interface_type_uuid = asp_driver_interface_type_uuid_macro();
 
-    // SAFETY: arguments is valid (passed by the HAL)
+    // SAFETY: arguments are valid (passed by the HAL)
     let iunknown_uuid_bytes: CFUUIDBytes = unsafe { CFUUIDGetUUIDBytes(i_unknown_uuid) };
     let audio_server_plug_in_driver_interface_uuid_bytes: CFUUIDBytes =
-        CFUUIDGetUUIDBytes(asp_driver_interface_type_uuid);
+        unsafe { CFUUIDGetUUIDBytes(asp_driver_interface_type_uuid) };
 
-    //	check args
-    DoIfFailed(
-        in_driver != DRIVER_REF,
-        return kAudioHardwareBadObjectError,
-        "syfala_query_interface: bad driver reference",
-    );
-    DoIfFailed(
-        out_interface == NULL,
-        return kAudioHardwareIllegalOperationError,
-        "syfala_query_interface: no place to store the returned interface",
-    );
+    if !eq_driver_ptr(driver) {
+        log::error!("syfala_query_interface: bad driver reference");
+        return kAudioHardwareBadObjectError as HRESULT;
+    }
+
+    if out_interface.is_null() {
+        log::error!("syfala_query_interface: no place to store the returned interface");
+        return kAudioHardwareIllegalOperationError as HRESULT;
+    }
+
+    let in_uuid_bytes = cfuuid_as_bytes(&in_uuid);
 
     //	AudioServerPlugIns only support two interfaces, IUnknown (which has to be supported by all
     //	CFPlugIns and AudioServerPlugInDriverInterface (which is the actual interface the HAL will
     //	use).
-    if (memcmp(&in_uuid, &iunknown_uuid_bytes, sizeof(CFUUIDBytes)) == 0
-        || memcmp(
-            &in_uuid,
-            &audio_server_plug_in_driver_interface_uuid_bytes,
-            sizeof(CFUUIDBytes),
-        ) == 0)
+    if in_uuid_bytes == cfuuid_as_bytes(&iunknown_uuid_bytes)
+        || in_uuid_bytes == cfuuid_as_bytes(&audio_server_plug_in_driver_interface_uuid_bytes)
     {
-        atomic_fetch_add_explicit(&PLUGIN_REF_COUNT, 1, __ATOMIC_RELAXED);
-        *out_interface = DRIVER_REF;
+        saturating_refount_inc(&PLUGIN_REF_COUNT);
+        unsafe { out_interface.write(raw_driver_ptr()) };
     } else {
         return E_NOINTERFACE;
     }
 
-    return kAudioHardwareNoError;
+    return kAudioHardwareNoError as HRESULT;
 }
 
-// static ULONG syfala_add_ref(
-// 	void* const inDriver
-// ) {
-// 	//	This call returns the resulting reference count after the increment.
+unsafe extern "C" fn syfala_add_ref(driver: *mut std::os::raw::c_void) -> ULONG {
+    //	This call returns the resulting reference count after the increment.
 
-// 	DebugMsg("AddRef");
+    log::debug!("AddRef");
 
-// 	// check args
-// 	DoIfFailed(inDriver != DRIVER_REF, return 0, "syfala_add_ref: bad driver reference");
+    // check args
+    if !eq_driver_ptr(driver) {
+        log::error!("syfala_add_ref: bad driver reference");
+        return 0 as ULONG;
+    }
 
-// 	//	increment the refcount, return the new value
-// 	return atomic_fetch_add_explicit(&PLUGIN_REF_COUNT, 1, __ATOMIC_RELAXED) + 1;
-// }
+    //	increment the refcount, return the new value
+    return saturating_refount_inc(&PLUGIN_REF_COUNT).saturating_add(1);
+}
 
-// static ULONG syfala_release(
-// 	void* const inDriver
-// ) {
-// 	//	This call returns the resulting reference count after the decrement.
-// 	DebugMsg("Release");
+unsafe extern "C" fn syfala_release(driver: *mut std::os::raw::c_void) -> ULONG {
+    //	This call returns the resulting reference count after the decrement.
+    log::debug!("Release");
 
-// 	// check args
-// 	DoIfFailed(inDriver != DRIVER_REF, return 0, "syfala_Release: bad driver reference");
+    // check args
+    if !eq_driver_ptr(driver) {
+        log::error!("syfala_add_ref: bad driver reference");
+        return 0 as ULONG;
+    }
 
-// 	// decrement the refcount, return the new value
-// 	return atomic_fetch_sub_explicit(&PLUGIN_REF_COUNT, 1, __ATOMIC_RELAXED) - 1;
-// }
+    // decrement the refcount, return the new value
+    return saturating_refount_dec(&PLUGIN_REF_COUNT).saturating_sub(1);
+}
 
-// #pragma mark Basic Operations
+unsafe extern "C" fn syfala_initialize(
+    driver: AudioServerPlugInDriverRef,
+    host: AudioServerPlugInHostRef,
+) -> OSStatus {
+    //	The job of this method is, as the name implies, to get the driver initialized. Note that when this call returns, the HAL will scan the various lists the driver
+    //	maintains (such as the device list) to get the inital set of objects the driver is
+    //	publishing. So, there is no need to notifiy the HAL about any objects created as part of the
+    //	execution of this method.
 
-// static OSStatus	syfala_initialize(
-// 	AudioServerPlugInDriverRef const inDriver,
-// 	AudioServerPlugInHostRef const inHost
-// ) {
-// 	//	The job of this method is, as the name implies, to get the driver initialized. Note that when this call returns, the HAL will scan the various lists the driver
-// 	//	maintains (such as the device list) to get the inital set of objects the driver is
-// 	//	publishing. So, there is no need to notifiy the HAL about any objects created as part of the
-// 	//	execution of this method.
+    log::debug!("Initialize");
 
-// 	DebugMsg("Initialize");
+    if !eq_driver_ptr(driver.cast()) {
+        log::error!("syfala_initialize: bad driver reference");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-// 	// check args
-// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_initialize: bad driver reference");
+    // One specific thing that needs to be done is to store the AudioServerPlugInHostRef
+    // so that it can be used later. This is the object used by our plugin to notify the host
+    // of property changes etc.
+    // SAFETY: the HAL guarantees this isn't called concurrently, and that `host` outlives
+    // our whole plugin ('static lifetime)
+    unsafe { HOST = host.as_ref() };
 
-// 	// One specific thing that needs to be done is to store the AudioServerPlugInHostRef
-// 	// so that it can be used later. This is the object used by our plugin to notify the host
-// 	// of property changes etc.
-// 	HOST = inHost;
+    #[repr(C)]
+    #[allow(non_camel_case_types)]
+    pub struct mach_timebase_info_data_t {
+        pub numer: u32,
+        pub denom: u32,
+    }
 
-// 	//	calculate the host ticks per frame
-// 	struct mach_timebase_info theTimeBaseInfo;
-// 	mach_timebase_info(&theTimeBaseInfo);
-// 	Float64 host_clock_freq = (Float64)theTimeBaseInfo.denom / (Float64)theTimeBaseInfo.numer;
-// 	host_clock_freq *= 1000000000.0;
-// 	pthread_mutex_lock(&gDevice_IOMutex);
-// 	gDevice_HostTicksPerFrame = host_clock_freq / SAMPLE_RATE;
-// 	pthread_mutex_unlock(&gDevice_IOMutex);
+    unsafe extern "C" {
+        pub safe fn mach_timebase_info(info: *mut mach_timebase_info_data_t) -> i32;
+    }
 
-// 	return kAudioHardwareNoError;
-// }
+    //	calculate the host ticks per frame
+    let mut the_timebase_info = mach_timebase_info_data_t { numer: 0, denom: 0 };
+    mach_timebase_info(ptr::from_mut(&mut the_timebase_info));
+    let host_clock_freq = the_timebase_info.denom as Float64 / the_timebase_info.numer as Float64;
+    DEVICE_IO.lock().unwrap().host_ticks_per_frame = host_clock_freq * (1000000000. / SAMPLE_RATE);
 
-// static OSStatus	syfala_create_device(
-// 	AudioServerPlugInDriverRef const inDriver,
-// 	CFDictionaryRef const inDescription,
-// 	AudioServerPlugInClientInfo const* const inClientInfo,
-// 	AudioObjectID* const outDeviceObjectIO
-// ) {
-// 	//	This method is used to tell a driver that implements the Transport Manager semantics to
-// 	//	create an AudioEndpointDevice from a set of AudioEndpoints. Since this driver is not a
-// 	//	Transport Manager, we just check the arguments and return
-// 	//	kAudioHardwareUnsupportedOperationError.
+    return kAudioHardwareNoError as OSStatus;
+}
 
-// 	DebugMsg("CreateDevice");
+unsafe extern "C" fn syfala_create_device(
+    driver: AudioServerPlugInDriverRef,
+    _description: CFDictionaryRef,
+    _client_info: *const AudioServerPlugInClientInfo,
+    _device_object_id: *mut AudioObjectID,
+) -> OSStatus {
+    //	This method is used to tell a driver that implements the Transport Manager semantics to
+    //	create an AudioEndpointDevice from a set of AudioEndpoints. Since this driver is not a
+    //	Transport Manager, we just check the arguments and return
+    //	kAudioHardwareUnsupportedOperationError.
 
-// 	// check args
-// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_create_device: bad driver reference");
+    log::debug!("CreateDevice");
 
-// 	return kAudioHardwareUnsupportedOperationError;
-// }
+    // check args
+    if !eq_driver_ptr(driver.cast()) {
+        log::error!("syfala_create_device: bad driver reference");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-// static OSStatus	syfala_destroy_device(
-// 	AudioServerPlugInDriverRef const inDriver,
-// 	AudioObjectID const inDeviceObjectID
-// ) {
-// 	//	This method is used to tell a driver that implements the Transport Manager semantics to
-// 	//	destroy an AudioEndpointDevice. Since this driver is not a Transport Manager, we just check
-// 	//	the arguments and return kAudioHardwareUnsupportedOperationError.
+    return kAudioHardwareUnsupportedOperationError as OSStatus;
+}
 
-// 	#pragma unused(inDeviceObjectID)
+unsafe extern "C" fn syfala_destroy_device(
+    driver: AudioServerPlugInDriverRef,
+    _device_object_id: AudioObjectID,
+) -> OSStatus {
+    //	This method is used to tell a driver that implements the Transport Manager semantics to
+    //	destroy an AudioEndpointDevice. Since this driver is not a Transport Manager, we just check
+    //	the arguments and return kAudioHardwareUnsupportedOperationError.
 
-// 	DebugMsg("DestroyDevice");
+    log::debug!("DestroyDevice");
 
-// 	// check args
-// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_destroy_device: bad driver reference");
+    // check args
+    if !eq_driver_ptr(driver.cast()) {
+        log::error!("syfala_destroy_device: bad driver reference");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-// 	return kAudioHardwareUnsupportedOperationError;
-// }
+    return kAudioHardwareUnsupportedOperationError as OSStatus;
+}
 
-// static OSStatus	syfala_add_device_client(
-// 	AudioServerPlugInDriverRef const inDriver,
-// 	AudioObjectID const inDeviceObjectID,
-// 	AudioServerPlugInClientInfo const* const inClientInfo
-// ) {
-// 	//	This method is used to inform the driver about a new client that is using the given device.
-// 	//	This allows the device to act differently depending on who the client is. This driver does
-// 	//	not need to track the clients using the device, so we just check the arguments and return
-// 	//	successfully.
+unsafe extern "C" fn syfala_add_device_client(
+    driver: AudioServerPlugInDriverRef,
+    device_object_id: AudioObjectID,
+    _client_info: *const AudioServerPlugInClientInfo,
+) -> OSStatus {
+    //	This method is used to inform the driver about a new client that is using the given device.
+    //	This allows the device to act differently depending on who the client is. This driver does
+    //	not need to track the clients using the device, so we just check the arguments and return
+    //	successfully.
 
-// 	DebugMsg("AddDeviceClient");
+    log::debug!("AddDeviceClient");
 
-// 	#pragma unused(inClientInfo)
+    // check args
+    if !eq_driver_ptr(driver.cast()) {
+        log::error!("syfala_add_device_client: bad driver reference");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-// 	// check args
-// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_add_device_client: bad driver reference");
-// 	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "syfala_add_device_client: bad device ID");
+    if device_object_id != DEVICE_ID {
+        log::error!("syfala_add_device_client: bad device ID");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-// 	return kAudioHardwareNoError;
-// }
+    return kAudioHardwareNoError as OSStatus;
+}
 
-// static OSStatus	syfala_remove_device_client(
-// 	AudioServerPlugInDriverRef const inDriver,
-// 	AudioObjectID const inDeviceObjectID,
-// 	AudioServerPlugInClientInfo const* const inClientInfo
-// ) {
-// 	//	This method is used to inform the driver about a client that is no longer using the given
-// 	//	device. This driver does not track clients, so we just check the arguments and return
-// 	//	successfully.
+unsafe extern "C" fn syfala_remove_device_client(
+    driver: AudioServerPlugInDriverRef,
+    device_object_id: AudioObjectID,
+    _client_info: *const AudioServerPlugInClientInfo,
+) -> OSStatus {
+    //	This method is used to inform the driver about a client that is no longer using the given
+    //	device. This driver does not track clients, so we just check the arguments and return
+    //	successfully.
 
-// 	DebugMsg("RemoveDeviceClient");
+    log::debug!("RemoveDeviceClient");
 
-// 	#pragma unused(inClientInfo)
+    // check args
+    if !eq_driver_ptr(driver.cast()) {
+        log::error!("syfala_remove_device_client: bad driver reference");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-// 	// check args
-// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_remove_device_client: bad driver reference");
-// 	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "syfala_remove_device_client: bad device ID");
+    if device_object_id != DEVICE_ID {
+        log::error!("syfala_remove_device_client: bad device ID");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-// 	return kAudioHardwareNoError;
-// }
+    return kAudioHardwareNoError as OSStatus;
+}
 
-// static OSStatus	syfala_perform_device_configuration_change(
-// 	AudioServerPlugInDriverRef const inDriver,
-// 	AudioObjectID const inDeviceObjectID,
-// 	UInt64 const inChangeAction,
-// 	void* const inChangeInfo
-// ) {
-// 	// This method is called to tell the device that it can perform the configuation change that
-// 	// it had requested via a call to the host method, RequestDeviceConfigurationChange(). The
-// 	// arguments, inChangeAction and inChangeInfo are the same as what was passed to
-// 	// RequestDeviceConfigurationChange().
-// 	//
-// 	// The HAL guarantees that IO will be stopped while this method is in progress. The HAL will
-// 	// also handle figuring out exactly what changed for the non-control related properties. This
-// 	// means that the only notifications that would need to be sent here would be for either
-// 	// custom properties the HAL doesn't know about or for controls.
-// 	//
-// 	// For the device implemented by this driver, only sample rate changes go through this process
-// 	// as it is the only state that can be changed for the device that isn't a control. For this
-// 	// change, the new sample rate is passed in the inChangeAction argument.
+unsafe extern "C" fn syfala_perform_device_configuration_change(
+    driver: AudioServerPlugInDriverRef,
+    device_object_id: AudioObjectID,
+    _change_action: UInt64,
+    _change_info: *mut std::os::raw::c_void,
+) -> OSStatus {
+    // This method is called to tell the device that it can perform the configuation change that
+    // it had requested via a call to the host method, RequestDeviceConfigurationChange(). The
+    // arguments, inChangeAction and inChangeInfo are the same as what was passed to
+    // RequestDeviceConfigurationChange().
+    //
+    // The HAL guarantees that IO will be stopped while this method is in progress. The HAL will
+    // also handle figuring out exactly what changed for the non-control related properties. This
+    // means that the only notifications that would need to be sent here would be for either
+    // custom properties the HAL doesn't know about or for controls.
+    //
+    // For the device implemented by this driver, only sample rate changes go through this process
+    // as it is the only state that can be changed for the device that isn't a control. For this
+    // change, the new sample rate is passed in the inChangeAction argument.
 
-// 	DebugMsg("PerformDeviceConfigurationChange");
+    log::debug!("PerformDeviceConfigurationChange");
 
-// 	#pragma unused(inChangeInfo)
+    // check args
+    if !eq_driver_ptr(driver.cast()) {
+        log::error!("syfala_perform_device_configuration_change: bad driver reference");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-// 	// check args
-// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_perform_device_configuration_change: bad driver reference");
-// 	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "syfala_perform_device_configuration_change: bad device ID");
+    if device_object_id != DEVICE_ID {
+        log::error!("syfala_perform_device_configuration_change: bad device ID");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-// 	return kAudioHardwareNoError;
-// }
+    return kAudioHardwareNoError as OSStatus;
+}
 
-// static OSStatus	syfala_AbortDeviceConfigurationChange(
-// 	AudioServerPlugInDriverRef const inDriver,
-// 	AudioObjectID const inDeviceObjectID,
-// 	UInt64 const inChangeAction,
-// 	void* const inChangeInfo
-// ) {
-// 	//	This method is called to tell the driver that a request for a config change has been denied.
-// 	//	This provides the driver an opportunity to clean up any state associated with the request.
-// 	//	For this driver, an aborted config change requires no action. So we just check the arguments
-// 	//	and return
+unsafe extern "C" fn syfala_abort_device_configuration_change(
+    driver: AudioServerPlugInDriverRef,
+    device_object_id: AudioObjectID,
+    _change_action: UInt64,
+    _change_info: *mut std::os::raw::c_void,
+) -> OSStatus {
+    //	This method is called to tell the driver that a request for a config change has been denied.
+    //	This provides the driver an opportunity to clean up any state associated with the request.
+    //	For this driver, an aborted config change requires no action. So we just check the arguments
+    //	and return
 
-// 	DebugMsg("AbortDeviceConfigurationChange");
+    log::debug!("AbortDeviceConfigurationChange");
 
-// 	#pragma unused(inChangeAction, inChangeInfo)
+    // check args
+    if !eq_driver_ptr(driver.cast()) {
+        log::error!("syfala_abort_device_configuration_change: bad driver reference");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-// 	// check args
-// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_perform_device_configuration_change: bad driver reference");
-// 	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "syfala_perform_device_configuration_change: bad device ID");
+    if device_object_id != DEVICE_ID {
+        log::error!("syfala_abort_device_configuration_change: bad device ID");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-// 	return kAudioHardwareNoError;
-// }
-
-// #pragma mark Property Operations
+    return kAudioHardwareNoError as OSStatus;
+}
 
 // static Boolean	syfala_HasProperty(
 // 	AudioServerPlugInDriverRef const inDriver,
@@ -840,204 +1057,165 @@ fn syfala_query_interface(
 // 	return kAudioHardwareBadObjectError;
 // }
 
-// #pragma mark PlugIn Property Operations
 
-// static Boolean	syfala_HasPlugInProperty(
-// 	AudioObjectPropertyAddress const* const inAddress
-// ) {
-// 	//	This method returns whether or not the plug-in object has the given property.
 
-// 	switch(inAddress->mSelector)
-// 	{
-// 		case kAudioObjectPropertyBaseClass:
-// 		case kAudioObjectPropertyClass:
-// 		case kAudioObjectPropertyOwner:
-// 		case kAudioObjectPropertyManufacturer:
-// 		case kAudioObjectPropertyOwnedObjects:
+fn syfala_has_plug_in_property(selector: AudioObjectPropertySelector) -> bool {
+    //	This method returns whether or not the plug-in object has the given property.
 
-// 		case kAudioPlugInPropertyDeviceList:
-// 		case kAudioPlugInPropertyTranslateUIDToDevice:
-// 		case kAudioPlugInPropertyResourceBundle:
-// 			return true;
-// 	};
+    match selector {
+        kAudioObjectPropertyBaseClass
+        | kAudioObjectPropertyClass
+        | kAudioObjectPropertyOwner
+        | kAudioObjectPropertyManufacturer
+        | kAudioObjectPropertyOwnedObjects
+        | kAudioPlugInPropertyDeviceList
+        | kAudioPlugInPropertyTranslateUIDToDevice
+        | kAudioPlugInPropertyResourceBundle => true,
+        _ => false,
+    }
+}
 
-// 	return false;
-// }
+fn syfala_is_plug_in_property_settable(
+    selector: AudioObjectPropertySelector,
+) -> Result<bool, OSStatus> {
+    //	This method returns whether or not the given property on the plug-in object can have its
+    //	value changed.
+    match selector {
+        kAudioObjectPropertyBaseClass
+        | kAudioObjectPropertyClass
+        | kAudioObjectPropertyOwner
+        | kAudioObjectPropertyManufacturer
+        | kAudioObjectPropertyOwnedObjects
+        | kAudioPlugInPropertyDeviceList
+        | kAudioPlugInPropertyTranslateUIDToDevice
+        | kAudioPlugInPropertyResourceBundle => Ok(true),
+        _ => Err(kAudioHardwareUnknownPropertyError as OSStatus),
+    }
+}
 
-// static OSStatus	syfala_IsPlugInPropertySettable(
-// 	AudioObjectPropertyAddress const* const inAddress,
-// 	Boolean* const outIsSettable
-// ) {
-// 	//	This method returns whether or not the given property on the plug-in object can have its
-// 	//	value changed.
-// 	switch(inAddress->mSelector)
-// 	{
-// 		case kAudioObjectPropertyBaseClass:
-// 		case kAudioObjectPropertyClass:
-// 		case kAudioObjectPropertyOwner:
-// 		case kAudioObjectPropertyManufacturer:
-// 		case kAudioObjectPropertyOwnedObjects:
+fn syfala_get_plug_in_property_data_size(selector: AudioObjectPropertySelector) -> Option<UInt32> {
+    //	This method returns the byte size of the property's data.
 
-// 		case kAudioPlugInPropertyDeviceList:
-// 		case kAudioPlugInPropertyTranslateUIDToDevice:
-// 		case kAudioPlugInPropertyResourceBundle:
-// 			*outIsSettable = false;
-// 		default:
-// 			return kAudioHardwareUnknownPropertyError;
-// 	};
+    //	Note that for each object, this driver implements all the required properties plus a few
+    //	extras that are useful but not required. There is more detailed commentary about each
+    //	property in the syfala_GetPlugInPropertyData() method.
+    match selector {
+        kAudioObjectPropertyBaseClass | kAudioObjectPropertyClass => {
+            Some(size_of::<AudioClassID>().try_into().unwrap())
+        }
+        kAudioObjectPropertyOwner => Some(size_of::<AudioObjectID>().try_into().unwrap()),
+        kAudioObjectPropertyManufacturer => Some(size_of::<CFStringRef>().try_into().unwrap()),
+        kAudioObjectPropertyOwnedObjects | kAudioPlugInPropertyDeviceList => {
+            Some(size_of::<AudioObjectID>().strict_mul(1).try_into().unwrap())
+        }
+        kAudioPlugInPropertyTranslateUIDToDevice => {
+            Some(size_of::<AudioObjectID>().try_into().unwrap())
+        }
+        kAudioPlugInPropertyResourceBundle => Some(size_of::<CFStringRef>().try_into().unwrap()),
+        _ => None,
+    }
+}
 
-// 	return kAudioHardwareNoError;
-// }
 
-// static OSStatus	syfala_GetPlugInPropertyDataSize(
-// 	AudioObjectPropertyAddress const* const inAddress,
-// 	UInt32 const inQualifierDataSize,
-// 	void const* const inQualifierData,
-// 	UInt32* const outDataSize
-// ) {
-// 	//	This method returns the byte size of the property's data.
 
-// 	//	Note that for each object, this driver implements all the required properties plus a few
-// 	//	extras that are useful but not required. There is more detailed commentary about each
-// 	//	property in the syfala_GetPlugInPropertyData() method.
-// 	switch(inAddress->mSelector)
-// 	{
-// 		case kAudioObjectPropertyBaseClass:
-// 		case kAudioObjectPropertyClass:
-// 			*outDataSize = sizeof(AudioClassID);
-// 			break;
+// Not the cleanest, i know,
+/// None: kAudioHardwareUnknownPropertyError
+/// Some(None): kAudioHardwareBadPropertySizeError,
+/// Some(Some(n)): kAudioHardwareNoError,
+unsafe fn syfala_get_plug_in_property_data(
+    selector: AudioObjectPropertySelector,
+    qualifier_data_size: UInt32,
+    qualifier_data: *const std::os::raw::c_void,
+    data_size: UInt32,
+    out_data: *mut std::os::raw::c_void,
+) -> Option<Option<UInt32>> {
+    //	Note that for each object, this driver implements all the required properties plus a few
+    //	extras that are useful but not required.
+    //
+    //	Also, since most of the data that will get returned is static, there are few instances where
+    //	it is necessary to lock the state mutex.
 
-// 		case kAudioObjectPropertyOwner:
-// 			*outDataSize = sizeof(AudioObjectID);
-// 			break;
+    let Some(size) = syfala_get_plug_in_property_data_size(selector) else {
+        return None;
+    };
 
-// 		case kAudioObjectPropertyManufacturer:
-// 			*outDataSize = sizeof(CFStringRef);
-// 			break;
+    if data_size < size {
+        return Some(None);
+    }
 
-// 		case kAudioObjectPropertyOwnedObjects:
-// 		case kAudioPlugInPropertyDeviceList:
-// 			*outDataSize = 1 * sizeof(AudioObjectID);
-// 			break;
+    match selector {
+        //	The base class for kAudioPlugInClassID is kAudioObjectClassID
+        kAudioObjectPropertyBaseClass => unsafe {
+            ptr::write(out_data.cast(), kAudioObjectClassID)
+        },
+        //	The class is always kAudioPlugInClassID for regular drivers
+        kAudioObjectPropertyClass => unsafe { ptr::write(out_data.cast(), kAudioPlugInClassID) },
+        //	The plug-in doesn't have an owning object
+        kAudioObjectPropertyOwner => unsafe { ptr::write(out_data.cast(), kAudioObjectUnknown) },
+        //	This is the human readable name of the maker of the plug-in.
+        kAudioObjectPropertyManufacturer => unsafe {
+            ptr::write(out_data.cast(), cfstr("GRAME CNCM"))
+        },
 
-// 		case kAudioPlugInPropertyTranslateUIDToDevice:
-// 			*outDataSize = sizeof(AudioObjectID);
-// 			break;
+        // The plugin owns only 1 object, which is the device. So, handle these two cases the same way
+        kAudioObjectPropertyOwnedObjects
+        | kAudioPlugInPropertyDeviceList => {
+        	//	Calculate the number of items that have been requested. Note that this
+        	//	number is allowed to be smaller than the actual size of the list. In such
+        	//	case, only that number of items will be returned
+        	UInt32 const n_items = inDataSize / sizeof(AudioObjectID);
+        	//	Clamp that to the number of devices this driver implements (which is just 1)
+        	UInt32 const n_items_clamped = (n_items > 1) ? 1 : n_items;
 
-// 		case kAudioPlugInPropertyResourceBundle:
-// 			*outDataSize = sizeof(CFStringRef);
-// 			break;
+        	AudioObjectID* const data = (AudioObjectID*) out_data;
 
-// 		default:
-// 			return kAudioHardwareUnknownPropertyError;
-// 	};
+        	UInt32 index = 0;
 
-// 	return kAudioHardwareNoError;
-// }
+        	if(index < n_items_clamped) data[index++] = DEVICE_ID;
 
-// static OSStatus	syfala_GetPlugInPropertyData(
-// 	AudioObjectPropertyAddress const* const inAddress,
-// 	UInt32 const inQualifierDataSize,
-// 	void const* const inQualifierData,
-// 	UInt32 const inDataSize,
-// 	UInt32* const outDataSize,
-// 	void* const outData
-// ) {
-// 	//	Note that for each object, this driver implements all the required properties plus a few
-// 	//	extras that are useful but not required.
-// 	//
-// 	//	Also, since most of the data that will get returned is static, there are few instances where
-// 	//	it is necessary to lock the state mutex.
-// 	switch(inAddress->mSelector)
-// 	{
-// 		case kAudioObjectPropertyBaseClass:
-// 			//	The base class for kAudioPlugInClassID is kAudioObjectClassID
-// 			DoIfFailed(inDataSize < sizeof(AudioClassID), return kAudioHardwareBadPropertySizeError, "syfala_GetPlugInPropertyData: not enough space for the return value of kAudioObjectPropertyBaseClass for the plug-in");
-// 			*((AudioClassID*)outData) = kAudioObjectClassID;
-// 			*outDataSize = sizeof(AudioClassID);
-// 			break;
+        	//	Return how many bytes we wrote to
+        	*outDataSize = n_items_clamped * sizeof(AudioObjectID);
+        	break;
+        },
 
-// 		case kAudioObjectPropertyClass:
-// 			//	The class is always kAudioPlugInClassID for regular drivers
-// 			DoIfFailed(inDataSize < sizeof(AudioClassID), return kAudioHardwareBadPropertySizeError, "syfala_GetPlugInPropertyData: not enough space for the return value of kAudioObjectPropertyClass for the plug-in");
-// 			*((AudioClassID*)outData) = kAudioPlugInClassID;
-// 			*outDataSize = sizeof(AudioClassID);
-// 			break;
+        // kAudioPlugInPropertyTranslateUIDToDevice => {
+        // 	//	This property takes the CFString passed in the qualifier and converts that
+        // 	//	to the object ID of the device it corresponds to. For this driver, there is
+        // 	//	just the one device. Note that it is not an error if the string in the
+        // 	//	qualifier doesn't match any devices. In such case, kAudioObjectUnknown is
+        // 	//	the object ID to return.
+        // 	DoIfFailed(data_size < sizeof(AudioObjectID), return kAudioHardwareBadPropertySizeError, "syfala_GetPlugInPropertyData: not enough space for the return value of kAudioPlugInPropertyTranslateUIDToDevice");
+        // 	DoIfFailed(qualifier_data_size != sizeof(CFStringRef), return kAudioHardwareBadPropertySizeError, "syfala_GetPlugInPropertyData: the qualifier is the wrong size for kAudioPlugInPropertyTranslateUIDToDevice");
+        // 	DoIfFailed(qualifier_data == NULL, return kAudioHardwareBadPropertySizeError, "syfala_GetPlugInPropertyData: no qualifier for kAudioPlugInPropertyTranslateUIDToDevice");
 
-// 		case kAudioObjectPropertyOwner:
-// 			//	The plug-in doesn't have an owning object
-// 			DoIfFailed(inDataSize < sizeof(AudioObjectID), return kAudioHardwareBadPropertySizeError, "syfala_GetPlugInPropertyData: not enough space for the return value of kAudioObjectPropertyOwner for the plug-in");
-// 			*((AudioObjectID*)outData) = kAudioObjectUnknown;
-// 			*outDataSize = sizeof(AudioObjectID);
-// 			break;
+        // 	if(
+        // 		CFStringCompare(
+        // 			*((CFStringRef*)qualifier_data),
+        // 			CFSTR(kDevice_UID),
+        // 			0
+        // 		) == kCFCompareEqualTo
+        // 	) *((AudioObjectID*)out_data) = DEVICE_ID;
 
-// 		case kAudioObjectPropertyManufacturer:
-// 			//	This is the human readable name of the maker of the plug-in.
-// 			DoIfFailed(inDataSize < sizeof(CFStringRef), return kAudioHardwareBadPropertySizeError, "syfala_GetPlugInPropertyData: not enough space for the return value of kAudioObjectPropertyManufacturer for the plug-in");
-// 			*((CFStringRef*)outData) = CFSTR("GRAME CNCM");
-// 			*outDataSize = sizeof(CFStringRef);
-// 			break;
+        // 	else *((AudioObjectID*)out_data) = kAudioObjectUnknown;
 
-// 		// The plugin owns only 1 object, which is the device. So, handle these two cases the same way
-// 		case kAudioObjectPropertyOwnedObjects:
-// 		case kAudioPlugInPropertyDeviceList:
-// 		{
-// 			//	Calculate the number of items that have been requested. Note that this
-// 			//	number is allowed to be smaller than the actual size of the list. In such
-// 			//	case, only that number of items will be returned
-// 			UInt32 const n_items = inDataSize / sizeof(AudioObjectID);
-// 			//	Clamp that to the number of devices this driver implements (which is just 1)
-// 			UInt32 const n_items_clamped = (n_items > 1) ? 1 : n_items;
+        // 	*outDataSize = sizeof(AudioObjectID);
+        // 	break;
+        // },
 
-// 			AudioObjectID* const data = (AudioObjectID*) outData;
+        // kAudioPlugInPropertyResourceBundle => {
+        // 	//	The resource bundle is a path relative to the path of the plug-in's bundle.
+        // 	//	To specify that the plug-in bundle itself should be used, we just return the
+        // 	//	empty string.
+        // 	DoIfFailed(data_size < sizeof(AudioObjectID), return kAudioHardwareBadPropertySizeError, "syfala_GetPlugInPropertyData: not enough space for the return value of kAudioPlugInPropertyResourceBundle");
+        // 	*((CFStringRef*)out_data) = CFSTR("");
+        // 	*outDataSize = sizeof(CFStringRef);
+        // 	break;
+        // },
+        _ => unreachable!(),
+    }
 
-// 			UInt32 index = 0;
-
-// 			if(index < n_items_clamped) data[index++] = DEVICE_ID;
-
-// 			//	Return how many bytes we wrote to
-// 			*outDataSize = n_items_clamped * sizeof(AudioObjectID);
-// 			break;
-// 		}
-
-// 		case kAudioPlugInPropertyTranslateUIDToDevice:
-// 			//	This property takes the CFString passed in the qualifier and converts that
-// 			//	to the object ID of the device it corresponds to. For this driver, there is
-// 			//	just the one device. Note that it is not an error if the string in the
-// 			//	qualifier doesn't match any devices. In such case, kAudioObjectUnknown is
-// 			//	the object ID to return.
-// 			DoIfFailed(inDataSize < sizeof(AudioObjectID), return kAudioHardwareBadPropertySizeError, "syfala_GetPlugInPropertyData: not enough space for the return value of kAudioPlugInPropertyTranslateUIDToDevice");
-// 			DoIfFailed(inQualifierDataSize != sizeof(CFStringRef), return kAudioHardwareBadPropertySizeError, "syfala_GetPlugInPropertyData: the qualifier is the wrong size for kAudioPlugInPropertyTranslateUIDToDevice");
-// 			DoIfFailed(inQualifierData == NULL, return kAudioHardwareBadPropertySizeError, "syfala_GetPlugInPropertyData: no qualifier for kAudioPlugInPropertyTranslateUIDToDevice");
-
-// 			if(
-// 				CFStringCompare(
-// 					*((CFStringRef*)inQualifierData),
-// 					CFSTR(kDevice_UID),
-// 					0
-// 				) == kCFCompareEqualTo
-// 			) *((AudioObjectID*)outData) = DEVICE_ID;
-
-// 			else *((AudioObjectID*)outData) = kAudioObjectUnknown;
-
-// 			*outDataSize = sizeof(AudioObjectID);
-// 			break;
-
-// 		case kAudioPlugInPropertyResourceBundle:
-// 			//	The resource bundle is a path relative to the path of the plug-in's bundle.
-// 			//	To specify that the plug-in bundle itself should be used, we just return the
-// 			//	empty string.
-// 			DoIfFailed(inDataSize < sizeof(AudioObjectID), return kAudioHardwareBadPropertySizeError, "syfala_GetPlugInPropertyData: not enough space for the return value of kAudioPlugInPropertyResourceBundle");
-// 			*((CFStringRef*)outData) = CFSTR("");
-// 			*outDataSize = sizeof(CFStringRef);
-// 			break;
-
-// 		default:
-// 			return kAudioHardwareUnknownPropertyError;
-// 	};
-
-// 	return kAudioHardwareNoError;
-// }
+    Some(Some(size))
+}
 
 // #pragma mark Device Property Operations
 

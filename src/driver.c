@@ -391,7 +391,7 @@ static OSStatus	syfala_initialize(
 	pthread_mutex_lock(&gDevice_IOMutex);
 	gDevice_HostTicksPerFrame = host_clock_freq / SAMPLE_RATE;
 	pthread_mutex_unlock(&gDevice_IOMutex);
-	
+
 	return kAudioHardwareNoError;
 }
 
