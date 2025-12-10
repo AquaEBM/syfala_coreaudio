@@ -1265,14 +1265,14 @@ static OSStatus	syfala_GetDevicePropertyData(
 		case kAudioObjectPropertyName:
 			//	This is the human readable name of the device.
 			DoIfFailed(inDataSize < sizeof(CFStringRef), return kAudioHardwareBadPropertySizeError, "syfala_GetDevicePropertyData: not enough space for the return value of kAudioObjectPropertyName for the device");
-			*((CFStringRef*)outData) = CFSTR("Space Bar");
+			*((CFStringRef*)outData) = CFSTR("NAME);
 			*outDataSize = sizeof(CFStringRef);
 			break;
 
 		case kAudioObjectPropertyManufacturer:
 			//	This is the human readable name of the maker of the device.
 			DoIfFailed(inDataSize < sizeof(CFStringRef), return kAudioHardwareBadPropertySizeError, "syfala_GetDevicePropertyData: not enough space for the return value of kAudioObjectPropertyManufacturer for the device");
-			*((CFStringRef*)outData) = CFSTR("GRAME"); 
+			*((CFStringRef*)outData) = CFSTR("ME"); 
 			*outDataSize = sizeof(CFStringRef);
 			break;
 
@@ -1290,7 +1290,10 @@ static OSStatus	syfala_GetDevicePropertyData(
 				{
 					//	Calculate the number of items that have been requested. Note that this
 					//	number is allowed to be smaller than the actual size of the list. In such
-					//	case, only that number of items will be returned
+					//	case, only that number of items will be returned.
+
+					// --  TO CHATGPT  --:
+					// use write_get_size with an iterator/array for properties with the comment above
 					UInt32 const n_items = inDataSize / sizeof(AudioObjectID);
 					bool const include_stream_obj = inAddress->mSelector == kAudioObjectPropertyOwnedObjects;
 					UInt32 const max_n_items = N_CONTROLS + ((include_stream_obj) ? 1 : 0);
@@ -1452,7 +1455,7 @@ static OSStatus	syfala_GetDevicePropertyData(
 			//	successive sample times in the zero time stamps this device provides.
 			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "syfala_GetDevicePropertyData: not enough space for the return value of kAudioDevicePropertyZeroTimeStampPeriod for the device");
 			*((UInt32*)outData) = kDevice_RingBufferSize;
-			*outDataSize = sizeof(UInt32); // TODO?
+			*outDataSize = sizeof(UInt32);
 			break;
 
 		case kAudioDevicePropertyIcon:
