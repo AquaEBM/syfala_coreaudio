@@ -1265,7 +1265,7 @@ static OSStatus	syfala_GetDevicePropertyData(
 		case kAudioObjectPropertyName:
 			//	This is the human readable name of the device.
 			DoIfFailed(inDataSize < sizeof(CFStringRef), return kAudioHardwareBadPropertySizeError, "syfala_GetDevicePropertyData: not enough space for the return value of kAudioObjectPropertyName for the device");
-			*((CFStringRef*)outData) = CFSTR("NAME);
+			*((CFStringRef*)outData) = CFSTR("NAME");
 			*outDataSize = sizeof(CFStringRef);
 			break;
 
