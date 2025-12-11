@@ -2022,7 +2022,7 @@ static OSStatus	syfala_GetControlPropertyData(
 				Float32 const gain = atomic_load_explicit(&OUTPUT_VOLUME[ctrl_index], __ATOMIC_RELAXED);
 				Float32 const db = gain_to_db(gain);
 				Float32 const db_clamped = fminf(fmaxf(db, VOL_MIN_DB), VOL_MAX_DB);
-				Float32 const norm = linear_remap(db, VOL_MIN_DB, VOL_DB_RANGE, 0.0f, 1.0f);
+				Float32 const norm = linear_remap(db_clamped, VOL_MIN_DB, VOL_DB_RANGE, 0.0f, 1.0f);
 				*((Float32*)outData) = sq(norm);
 				*outDataSize = sizeof(Float32);
 				return kAudioHardwareNoError;

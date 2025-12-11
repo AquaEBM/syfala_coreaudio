@@ -4,7 +4,7 @@ use core::{
     ptr::{self, NonNull},
     sync::atomic::{AtomicBool, AtomicU32, Ordering},
 };
-use std::sync::Mutex;
+use std::{panic, sync::Mutex};
 
 use atomic_float::AtomicF32;
 use coreaudio_sys::*;
@@ -113,6 +113,39 @@ fn linear_remap(
     return f32::mul_add(x - x_start, y_len / x_len, y_start);
 }
 
+#[inline(always)]
+fn volume_control_db_val(index: usize) -> Option<Float32> {
+    OUTPUT_VOLUME.get(index).map(|v| {
+        gain_to_db(v.load(Ordering::Relaxed))
+            .min(VOL_MAX_DB)
+            .max(VOL_MAX_DB)
+    })
+}
+
+#[inline(always)]
+fn volume_control_norm_val(index: usize) -> Option<Float32> {
+    volume_control_db_val(index).map(|db| sq(linear_remap(db, VOL_MIN_DB, VOL_DB_RANGE, 0., 1.)))
+}
+
+#[inline(always)]
+fn norm_to_db(v: Float32) -> Float32 {
+    let clamped = v.min(1.).max(0.);
+    let skewed = Float32::sqrt(clamped);
+    linear_remap(skewed, 0., 1., VOL_MIN_DB, VOL_DB_RANGE)
+}
+
+#[inline(always)]
+fn norm_to_gain(v: Float32) -> Float32 {
+    db_to_gain(norm_to_db(v))
+}
+
+#[inline(always)]
+fn db_to_norm(db: Float32) -> Float32 {
+    let clamped = db.min(VOL_MIN_DB).max(VOL_MAX_DB);
+    let gain = linear_remap(clamped, VOL_MIN_DB, VOL_DB_RANGE, 0., 1.);
+    return sq(gain);
+}
+
 // Increment an atomic counter, saturating at numerical limits
 #[inline(always)]
 fn saturating_refount_inc(i: &AtomicU32) -> u32 {
@@ -154,7 +187,7 @@ static mut HOST: Option<&AudioServerPlugInHostInterface> = None;
 
 // We redefine the driver interface from the coreaudio bindings because the generated one isn't
 // Sync (can't be put in statics), because of the _reserved field (raw pointer). so we redefine
-// it and unsafe impl Sync {}
+// it and `unsafe impl Sync {}`
 
 #[repr(C)]
 pub struct AudioServerPlugInDriverInterface {
@@ -323,40 +356,40 @@ unsafe impl Sync for AudioServerPlugInDriverInterface {}
 // All of the plugin's methods are exposed through this struct, which we return a reference to in the factory function
 static DRIVER_INTERFACE: AudioServerPlugInDriverInterface = AudioServerPlugInDriverInterface {
     _reserved: core::ptr::null_mut(),
-    query_interface: Some(syfala_query_interface),
-    add_ref: Some(syfala_add_ref),
-    release: Some(syfala_release),
-    initialize: Some(syfala_initialize),
-    create_device: Some(syfala_create_device),
-    destroy_device: Some(syfala_destroy_device),
-    add_device_client: Some(syfala_add_device_client),
-    remove_device_client: Some(syfala_remove_device_client),
-    perform_device_configuration_change: Some(syfala_perform_device_configuration_change),
-    abort_device_configuration_change: Some(syfala_abort_device_configuration_change),
-    has_property: Some(syfala_HasProperty),
-    is_property_settable: Some(syfala_IsPropertySettable),
-    get_property_data_size: Some(syfala_GetPropertyDataSize),
-    get_property_data: Some(syfala_GetPropertyData),
-    set_property_data: Some(syfala_SetPropertyData),
-    start_io: Some(syfala_StartIO),
-    stop_io: Some(syfala_StopIO),
-    get_zero_time_stamp: Some(syfala_GetZeroTimeStamp),
-    will_do_iooperation: Some(syfala_WillDoIOOperation),
-    begin_iooperation: Some(syfala_BeginIOOperation),
-    do_iooperation: Some(syfala_DoIOOperation),
-    end_iooperation: Some(syfala_EndIOOperation),
+    query_interface: Some(query_interface),
+    add_ref: Some(add_ref),
+    release: Some(release),
+    initialize: Some(initialize),
+    create_device: Some(create_device),
+    destroy_device: Some(destroy_device),
+    add_device_client: Some(add_device_client),
+    remove_device_client: Some(remove_device_client),
+    perform_device_configuration_change: Some(perform_device_configuration_change),
+    abort_device_configuration_change: Some(abort_device_configuration_change),
+    has_property: Some(has_property),
+    is_property_settable: Some(is_property_settable),
+    get_property_data_size: Some(get_property_data_size),
+    get_property_data: Some(GetPropertyData),
+    set_property_data: Some(SetPropertyData),
+    start_io: Some(StartIO),
+    stop_io: Some(StopIO),
+    get_zero_time_stamp: Some(GetZeroTimeStamp),
+    will_do_iooperation: Some(WillDoIOOperation),
+    begin_iooperation: Some(BeginIOOperation),
+    do_iooperation: Some(DoIOOperation),
+    end_iooperation: Some(EndIOOperation),
 };
 
 static DRIVER_OBJECT: &AudioServerPlugInDriverInterface = &DRIVER_INTERFACE;
 
-const PLUGIN_BUNDLE_ID: &str = "com.emeraude.syfala_coreaudio";
+const PLUGIN_BUNDLE_ID: &str = "com.emeraude.coreaudio";
 
 static PLUGIN_REF_COUNT: AtomicU32 = AtomicU32::new(0);
 static IS_OUTPUT_STREAM_ACTIVE: AtomicBool = AtomicBool::new(true);
 
-const DEVICE_UID: &str = "syfala_UID";
+const DEVICE_UID: &str = "UID";
 
-const DEVICE_MODEL_UID: &str = "syfala_ModelUID";
+const DEVICE_MODEL_UID: &str = "ModelUID";
 
 const DEVICE_RING_BUF_SIZE: UInt32 = 16384;
 
@@ -477,7 +510,7 @@ fn cfstr(str: &str) -> CFStringRef {
             str.as_bytes().as_ptr(),
             str.len().try_into().unwrap(),
             kCFStringEncodingUTF8,
-            false as Boolean,
+            Boolean::from(false),
         )
     }
 }
@@ -492,7 +525,7 @@ const fn raw_driver_ptr() -> *mut std::os::raw::c_void {
 // This is the only function exported as a symbol by the library, It's name must be indicated in
 // the CFPlugInFactories field the bundle's Info.plist file.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn syfala_create(
+unsafe extern "C" fn create(
     _in_allocator: CFAllocatorRef,
     in_requested_type_uuid: CFUUIDRef,
 ) -> *mut std::os::raw::c_void {
@@ -538,7 +571,7 @@ const fn cfuuid_as_bytes(uuid: &CFUUIDBytes) -> &[u8; 16] {
 // E_NOINTERFACE
 const E_NOINTERFACE: HRESULT = 0x80000004;
 
-unsafe extern "C" fn syfala_query_interface(
+unsafe extern "C" fn query_interface(
     driver: *mut std::os::raw::c_void,
     in_uuid: REFIID,
     out_interface: *mut LPVOID,
@@ -560,12 +593,12 @@ unsafe extern "C" fn syfala_query_interface(
         unsafe { CFUUIDGetUUIDBytes(asp_driver_interface_type_uuid) };
 
     if !eq_driver_ptr(driver) {
-        log::error!("syfala_query_interface: bad driver reference");
+        log::error!("query_interface: bad driver reference");
         return kAudioHardwareBadObjectError as HRESULT;
     }
 
     if out_interface.is_null() {
-        log::error!("syfala_query_interface: no place to store the returned interface");
+        log::error!("query_interface: no place to store the returned interface");
         return kAudioHardwareIllegalOperationError as HRESULT;
     }
 
@@ -586,14 +619,14 @@ unsafe extern "C" fn syfala_query_interface(
     return kAudioHardwareNoError as HRESULT;
 }
 
-unsafe extern "C" fn syfala_add_ref(driver: *mut std::os::raw::c_void) -> ULONG {
+unsafe extern "C" fn add_ref(driver: *mut std::os::raw::c_void) -> ULONG {
     //	This call returns the resulting reference count after the increment.
 
     log::debug!("AddRef");
 
     // check args
     if !eq_driver_ptr(driver) {
-        log::error!("syfala_add_ref: bad driver reference");
+        log::error!("add_ref: bad driver reference");
         return 0 as ULONG;
     }
 
@@ -601,13 +634,13 @@ unsafe extern "C" fn syfala_add_ref(driver: *mut std::os::raw::c_void) -> ULONG 
     return saturating_refount_inc(&PLUGIN_REF_COUNT).saturating_add(1);
 }
 
-unsafe extern "C" fn syfala_release(driver: *mut std::os::raw::c_void) -> ULONG {
+unsafe extern "C" fn release(driver: *mut std::os::raw::c_void) -> ULONG {
     //	This call returns the resulting reference count after the decrement.
     log::debug!("Release");
 
     // check args
     if !eq_driver_ptr(driver) {
-        log::error!("syfala_add_ref: bad driver reference");
+        log::error!("add_ref: bad driver reference");
         return 0 as ULONG;
     }
 
@@ -615,7 +648,7 @@ unsafe extern "C" fn syfala_release(driver: *mut std::os::raw::c_void) -> ULONG 
     return saturating_refount_dec(&PLUGIN_REF_COUNT).saturating_sub(1);
 }
 
-unsafe extern "C" fn syfala_initialize(
+unsafe extern "C" fn initialize(
     driver: AudioServerPlugInDriverRef,
     host: AudioServerPlugInHostRef,
 ) -> OSStatus {
@@ -627,7 +660,7 @@ unsafe extern "C" fn syfala_initialize(
     log::debug!("Initialize");
 
     if !eq_driver_ptr(driver.cast()) {
-        log::error!("syfala_initialize: bad driver reference");
+        log::error!("initialize: bad driver reference");
         return kAudioHardwareBadObjectError as OSStatus;
     }
 
@@ -637,6 +670,9 @@ unsafe extern "C" fn syfala_initialize(
     // SAFETY: the HAL guarantees this isn't called concurrently, and that `host` outlives
     // our whole plugin ('static lifetime)
     unsafe { HOST = host.as_ref() };
+
+    // ----
+    // coreaudio_sys doesn't define these, so we do it ourselves
 
     #[repr(C)]
     #[allow(non_camel_case_types)]
@@ -649,16 +685,19 @@ unsafe extern "C" fn syfala_initialize(
         pub safe fn mach_timebase_info(info: *mut mach_timebase_info_data_t) -> i32;
     }
 
+    // ----
+
     //	calculate the host ticks per frame
     let mut the_timebase_info = mach_timebase_info_data_t { numer: 0, denom: 0 };
     mach_timebase_info(ptr::from_mut(&mut the_timebase_info));
-    let host_clock_freq = the_timebase_info.denom as Float64 / the_timebase_info.numer as Float64;
+    let host_clock_freq =
+        Float64::from(the_timebase_info.denom) / Float64::from(the_timebase_info.numer);
     DEVICE_IO.lock().unwrap().host_ticks_per_frame = host_clock_freq * (1000000000. / SAMPLE_RATE);
 
     return kAudioHardwareNoError as OSStatus;
 }
 
-unsafe extern "C" fn syfala_create_device(
+unsafe extern "C" fn create_device(
     driver: AudioServerPlugInDriverRef,
     _description: CFDictionaryRef,
     _client_info: *const AudioServerPlugInClientInfo,
@@ -673,14 +712,14 @@ unsafe extern "C" fn syfala_create_device(
 
     // check args
     if !eq_driver_ptr(driver.cast()) {
-        log::error!("syfala_create_device: bad driver reference");
+        log::error!("create_device: bad driver reference");
         return kAudioHardwareBadObjectError as OSStatus;
     }
 
     return kAudioHardwareUnsupportedOperationError as OSStatus;
 }
 
-unsafe extern "C" fn syfala_destroy_device(
+unsafe extern "C" fn destroy_device(
     driver: AudioServerPlugInDriverRef,
     _device_object_id: AudioObjectID,
 ) -> OSStatus {
@@ -692,14 +731,14 @@ unsafe extern "C" fn syfala_destroy_device(
 
     // check args
     if !eq_driver_ptr(driver.cast()) {
-        log::error!("syfala_destroy_device: bad driver reference");
+        log::error!("destroy_device: bad driver reference");
         return kAudioHardwareBadObjectError as OSStatus;
     }
 
     return kAudioHardwareUnsupportedOperationError as OSStatus;
 }
 
-unsafe extern "C" fn syfala_add_device_client(
+unsafe extern "C" fn add_device_client(
     driver: AudioServerPlugInDriverRef,
     device_object_id: AudioObjectID,
     _client_info: *const AudioServerPlugInClientInfo,
@@ -713,19 +752,19 @@ unsafe extern "C" fn syfala_add_device_client(
 
     // check args
     if !eq_driver_ptr(driver.cast()) {
-        log::error!("syfala_add_device_client: bad driver reference");
+        log::error!("add_device_client: bad driver reference");
         return kAudioHardwareBadObjectError as OSStatus;
     }
 
     if device_object_id != DEVICE_ID {
-        log::error!("syfala_add_device_client: bad device ID");
+        log::error!("add_device_client: bad device ID");
         return kAudioHardwareBadObjectError as OSStatus;
     }
 
     return kAudioHardwareNoError as OSStatus;
 }
 
-unsafe extern "C" fn syfala_remove_device_client(
+unsafe extern "C" fn remove_device_client(
     driver: AudioServerPlugInDriverRef,
     device_object_id: AudioObjectID,
     _client_info: *const AudioServerPlugInClientInfo,
@@ -738,19 +777,19 @@ unsafe extern "C" fn syfala_remove_device_client(
 
     // check args
     if !eq_driver_ptr(driver.cast()) {
-        log::error!("syfala_remove_device_client: bad driver reference");
+        log::error!("remove_device_client: bad driver reference");
         return kAudioHardwareBadObjectError as OSStatus;
     }
 
     if device_object_id != DEVICE_ID {
-        log::error!("syfala_remove_device_client: bad device ID");
+        log::error!("remove_device_client: bad device ID");
         return kAudioHardwareBadObjectError as OSStatus;
     }
 
     return kAudioHardwareNoError as OSStatus;
 }
 
-unsafe extern "C" fn syfala_perform_device_configuration_change(
+unsafe extern "C" fn perform_device_configuration_change(
     driver: AudioServerPlugInDriverRef,
     device_object_id: AudioObjectID,
     _change_action: UInt64,
@@ -774,19 +813,19 @@ unsafe extern "C" fn syfala_perform_device_configuration_change(
 
     // check args
     if !eq_driver_ptr(driver.cast()) {
-        log::error!("syfala_perform_device_configuration_change: bad driver reference");
+        log::error!("perform_device_configuration_change: bad driver reference");
         return kAudioHardwareBadObjectError as OSStatus;
     }
 
     if device_object_id != DEVICE_ID {
-        log::error!("syfala_perform_device_configuration_change: bad device ID");
+        log::error!("perform_device_configuration_change: bad device ID");
         return kAudioHardwareBadObjectError as OSStatus;
     }
 
     return kAudioHardwareNoError as OSStatus;
 }
 
-unsafe extern "C" fn syfala_abort_device_configuration_change(
+unsafe extern "C" fn abort_device_configuration_change(
     driver: AudioServerPlugInDriverRef,
     device_object_id: AudioObjectID,
     _change_action: UInt64,
@@ -801,198 +840,186 @@ unsafe extern "C" fn syfala_abort_device_configuration_change(
 
     // check args
     if !eq_driver_ptr(driver.cast()) {
-        log::error!("syfala_abort_device_configuration_change: bad driver reference");
+        log::error!("abort_device_configuration_change: bad driver reference");
         return kAudioHardwareBadObjectError as OSStatus;
     }
 
     if device_object_id != DEVICE_ID {
-        log::error!("syfala_abort_device_configuration_change: bad device ID");
+        log::error!("abort_device_configuration_change: bad device ID");
         return kAudioHardwareBadObjectError as OSStatus;
     }
 
     return kAudioHardwareNoError as OSStatus;
 }
 
-// static Boolean	syfala_HasProperty(
-// 	AudioServerPlugInDriverRef const inDriver,
-// 	AudioObjectID const inObjectID,
-// 	pid_t const inClientProcessID,
-// 	AudioObjectPropertyAddress const* const inAddress
-// ) {
-// 	char const selector[5] = FourCCToCString(inAddress->mSelector);
-//     char const scope[5] = FourCCToCString(inAddress->mScope);
+unsafe extern "C" fn has_property(
+    driver: AudioServerPlugInDriverRef,
+    id: AudioObjectID,
+    _client_pid: pid_t,
+    addr: *const AudioObjectPropertyAddress,
+) -> Boolean {
+    // check args
+    if !eq_driver_ptr(driver.cast()) {
+        log::error!("has_property: bad driver reference");
+        return Boolean::from(false);
+    }
 
-//     DebugMsg(
-// 		"Has       : %02u { %s %s %02d } by %08x",
-// 		inObjectID,
-// 		selector,
-// 		scope,
-// 		inAddress->mElement,
-// 		inClientProcessID
-// 	);
+    let Some(addr) = NonNull::new(addr.cast_mut()) else {
+        log::error!("has_property: no address");
+        return Boolean::from(false);
+    };
 
-// 	//	check args
-// 	DoIfFailed(inDriver != DRIVER_REF, return false, "syfala_HasProperty: bad driver reference");
-// 	DoIfFailed(inAddress == NULL, return false, "syfala_HasProperty: no address");
+    let Ok(res) =
+        panic::catch_unwind(|| find_property_data(id, unsafe { addr.as_ref() }).is_some())
+    else {
+        log::error!("has_property: internal function panicked!!!");
+        return Boolean::from(false);
+    };
 
-// 	switch(inObjectID)
-// 	{
-// 		case PLUGIN_ID:
-// 			return syfala_HasPlugInProperty(inAddress);
+    Boolean::from(res)
+}
 
-// 		case DEVICE_ID:
-// 			return syfala_HasDeviceProperty(inAddress);
+unsafe extern "C" fn is_property_settable(
+    driver: AudioServerPlugInDriverRef,
+    id: AudioObjectID,
+    _client_pid: pid_t,
+    addr: *const AudioObjectPropertyAddress,
+    is_settable: *mut Boolean,
+) -> OSStatus {
+    // check args
+    if !eq_driver_ptr(driver.cast()) {
+        log::error!("is_property_settable: bad driver reference");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-// 		case STREAM_ID:
-// 			return syfala_HasStreamProperty(inAddress);
-// 	}
+    let Some(addr) = NonNull::new(addr.cast_mut()) else {
+        log::error!("is_property_settable: no address");
+        return kAudioHardwareIllegalOperationError as OSStatus;
+    };
 
-// 	return audio_object_is_control(inObjectID) && syfala_HasControlProperty(inObjectID, inAddress);
-// }
+    let Some(is_settable) = NonNull::new(is_settable) else {
+        log::error!("is_property_settable: no place to put the return value");
+        return kAudioHardwareIllegalOperationError as OSStatus;
+    };
 
-// static OSStatus	syfala_IsPropertySettable(
-// 	AudioServerPlugInDriverRef const inDriver,
-// 	AudioObjectID const inObjectID,
-// 	pid_t const inClientProcessID,
-// 	AudioObjectPropertyAddress const* const inAddress,
-// 	Boolean* const outIsSettable
-// ) {
-// 	char const selector[5] = FourCCToCString(inAddress->mSelector);
-//     char const scope[5] = FourCCToCString(inAddress->mScope);
+    let addr = unsafe { addr.as_ref() };
 
-//     DebugMsg(
-// 		"IsSettable: %02u { %s %s %02d } by %08x",
-// 		inObjectID,
-// 		selector,
-// 		scope,
-// 		inAddress->mElement,
-// 		inClientProcessID
-// 	);
+    let Ok(res) = panic::catch_unwind(|| {
+        find_property_data(id, addr).map(|data| data.read_data.is_some())
+    }) else {
+        log::error!("has_property: internal function panicked!!!");
+        return kAudioHardwareUnspecifiedError as OSStatus;
+    };
 
-// 	//	check args
-// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_IsPropertySettable: bad driver reference");
-// 	DoIfFailed(inAddress == NULL, return kAudioHardwareIllegalOperationError, "syfala_IsPropertySettable: no address");
-// 	DoIfFailed(outIsSettable == NULL, return kAudioHardwareIllegalOperationError, "syfala_IsPropertySettable: no place to put the return value");
+    let Some(output) = res.map(Boolean::from) else {
+        return kAudioHardwareUnknownPropertyError as OSStatus;
+    };
 
-// 	switch(inObjectID)
-// 	{
-// 		case PLUGIN_ID:
-// 			return syfala_IsPlugInPropertySettable(inAddress, outIsSettable);
+    unsafe { is_settable.write(output) }
 
-// 		case DEVICE_ID:
-// 			return syfala_IsDevicePropertySettable(inAddress, outIsSettable);
+    kAudioHardwareNoError as OSStatus
+}
 
-// 		case STREAM_ID:
-// 			return syfala_IsStreamPropertySettable(inAddress, outIsSettable);
-// 	};
+unsafe extern "C" fn get_property_data_size(
+	driver: AudioServerPlugInDriverRef,
+	id: AudioObjectID,
+	_client_pid: pid_t,
+	addr: *const AudioObjectPropertyAddress,
+	qual_size: UInt32,
+	qual_data: *const std::os::raw::c_void,
+	data_size: *mut UInt32,
+) -> OSStatus {
 
-// 	return (audio_object_is_control(inObjectID)) ?
-// 		syfala_IsControlPropertySettable(inObjectID, inAddress, outIsSettable) :
-// 		kAudioHardwareBadObjectError;
-// }
+    // This method returns the byte size of the property's data.
 
-// static OSStatus	syfala_GetPropertyDataSize(
-// 	AudioServerPlugInDriverRef const inDriver,
-// 	AudioObjectID const inObjectID,
-// 	pid_t const inClientProcessID,
-// 	AudioObjectPropertyAddress const* const inAddress,
-// 	UInt32 const inQualifierDataSize,
-// 	void const* const inQualifierData,
-// 	UInt32* const outDataSize
-// ) {
-// 	char const selector[5] = FourCCToCString(inAddress->mSelector);
-//     char const scope[5] = FourCCToCString(inAddress->mScope);
+    // check args
+    if !eq_driver_ptr(driver.cast()) {
+        log::error!("get_property_data_size: bad driver reference");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-//     DebugMsg(
-// 		"DataSize  : %02u { %s %s %02d } by %08x ",
-// 		inObjectID,
-// 		selector,
-// 		scope,
-// 		inAddress->mElement,
-// 		inClientProcessID
-// 	);
+    let Some(addr) = NonNull::new(addr.cast_mut()) else {
+        log::error!("get_property_data_size: no address");
+        return kAudioHardwareIllegalOperationError as OSStatus;
+    };
 
-// 	//	check args
-// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_GetPropertyDataSize: bad driver reference");
-// 	DoIfFailed(inAddress == NULL, return kAudioHardwareIllegalOperationError, "syfala_GetPropertyDataSize: no address");
-// 	DoIfFailed(outDataSize == NULL, return kAudioHardwareIllegalOperationError, "syfala_GetPropertyDataSize: no place to put the return value");
+    let Some(data_size) = NonNull::new(data_size) else {
+        log::error!("get_property_data_size: no place to put the return value");
+        return kAudioHardwareIllegalOperationError as OSStatus;
+    };
 
-// 	switch(inObjectID)
-// 	{
-// 		case PLUGIN_ID:
-// 			return syfala_GetPlugInPropertyDataSize(
-// 				inAddress,
-// 				inQualifierDataSize,
-// 				inQualifierData,
-// 				outDataSize
-// 			);
+    let addr = unsafe { addr.as_ref() };
 
-// 		case DEVICE_ID:
-// 			return syfala_GetDevicePropertyDataSize(inAddress, outDataSize);
+    let Ok(res) = panic::catch_unwind(|| {
+        find_property_data(id, addr).map(|data| (data.get_data_size)(id, addr).into_inner().1)
+    }) else {
+        log::error!("has_property: internal function panicked!!!");
+        return kAudioHardwareUnspecifiedError as OSStatus;
+    };
+	
+    let Some(output) = res else {
+        return kAudioHardwareUnknownPropertyError as OSStatus;
+    };
 
-// 		case STREAM_ID:
-// 			return syfala_GetStreamPropertyDataSize(inAddress, outDataSize);
-// 	};
+    unsafe { data_size.write(output) }
 
-// 	return (audio_object_is_control(inObjectID)) ?
-// 		syfala_GetControlPropertyDataSize(inObjectID, inAddress, outDataSize) :
-// 		kAudioHardwareBadObjectError;
-// }
+    kAudioHardwareNoError as OSStatus
+}
 
-// static OSStatus	syfala_GetPropertyData(
-// 	AudioServerPlugInDriverRef const inDriver,
-// 	AudioObjectID const inObjectID,
-// 	pid_t const inClientProcessID,
-// 	AudioObjectPropertyAddress const* const inAddress,
-// 	UInt32 const inQualifierDataSize,
-// 	void const* const inQualifierData,
-// 	UInt32 const inDataSize,
-// 	UInt32* const outDataSize,
-// 	void* const outData
-// ) {
-// 	char const selector[5] = FourCCToCString(inAddress->mSelector);
-//     char const scope[5] = FourCCToCString(inAddress->mScope);
+unsafe extern "C" fn GetPropertyData(
+	driver: AudioServerPlugInDriverRef,
+	id: AudioObjectID,
+	_client_pid: pid_t,
+	addr: *const AudioObjectPropertyAddress,
+	qual_size: UInt32,
+	qual_data: *const std::os::raw::c_void,
+	available_data_size: UInt32,
+	written_data_size: *mut UInt32,
+	out_data: *mut std::os::raw::c_void,
+) -> {
+	char const selector[5] = FourCCToCString(inAddress->mSelector);
+    char const scope[5] = FourCCToCString(inAddress->mScope);
 
-//     DebugMsg(
-// 		"GetData   : %02u { %s %s %02d } by %08x",
-// 		inObjectID,
-// 		selector,
-// 		scope,
-// 		inAddress->mElement,
-// 		inClientProcessID
-// 	);
+    DebugMsg(
+		"GetData   : %02u { %s %s %02d } by %08x",
+		inObjectID,
+		selector,
+		scope,
+		inAddress->mElement,
+		inClientProcessID
+	);
 
-// 	//	check args
-// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_GetPropertyData: bad driver reference");
-// 	DoIfFailed(inAddress == NULL, return kAudioHardwareIllegalOperationError, "syfala_GetPropertyData: no address");
-// 	DoIfFailed(outDataSize == NULL, return kAudioHardwareIllegalOperationError, "syfala_GetPropertyData: no place to put the return value size");
-// 	DoIfFailed(outData == NULL, return kAudioHardwareIllegalOperationError, "syfala_GetPropertyData: no place to put the return value");
+	//	check args
+	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "GetPropertyData: bad driver reference");
+	DoIfFailed(inAddress == NULL, return kAudioHardwareIllegalOperationError, "GetPropertyData: no address");
+	DoIfFailed(outDataSize == NULL, return kAudioHardwareIllegalOperationError, "GetPropertyData: no place to put the return value size");
+	DoIfFailed(outData == NULL, return kAudioHardwareIllegalOperationError, "GetPropertyData: no place to put the return value");
 
-// 	switch(inObjectID)
-// 	{
-// 		case PLUGIN_ID:
-// 			return syfala_GetPlugInPropertyData(
-// 				inAddress,
-// 				inQualifierDataSize,
-// 				inQualifierData,
-// 				inDataSize,
-// 				outDataSize,
-// 				outData
-// 			);
+	switch(inObjectID)
+	{
+		case PLUGIN_ID:
+			return GetPlugInPropertyData(
+				inAddress,
+				inQualifierDataSize,
+				inQualifierData,
+				inDataSize,
+				outDataSize,
+				outData
+			);
 
-// 		case DEVICE_ID:
-// 			return syfala_GetDevicePropertyData(inAddress, inDataSize, outDataSize, outData);
+		case DEVICE_ID:
+			return GetDevicePropertyData(inAddress, inDataSize, outDataSize, outData);
 
-// 		case STREAM_ID:
-// 			return syfala_GetStreamPropertyData(inAddress, inDataSize, outDataSize, outData);
-// 	};
+		case STREAM_ID:
+			return GetStreamPropertyData(inAddress, inDataSize, outDataSize, outData);
+	};
 
-// 	return (audio_object_is_control(inObjectID)) ?
-// 		syfala_GetControlPropertyData(inObjectID, inAddress, inDataSize, outDataSize, outData) :
-// 		kAudioHardwareBadObjectError;
-// }
+	return (audio_object_is_control(inObjectID)) ?
+		GetControlPropertyData(inObjectID, inAddress, inDataSize, outDataSize, outData) :
+		kAudioHardwareBadObjectError;
+}
 
-// static OSStatus	syfala_SetPropertyData(
+// static OSStatus	SetPropertyData(
 // 	AudioServerPlugInDriverRef const inDriver,
 // 	AudioObjectID const inObjectID,
 // 	pid_t const inClientProcessID,
@@ -1015,8 +1042,8 @@ unsafe extern "C" fn syfala_abort_device_configuration_change(
 // 	);
 
 // 	//	check args
-// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_SetPropertyData: bad driver reference");
-// 	DoIfFailed(inAddress == NULL, return kAudioHardwareIllegalOperationError, "syfala_SetPropertyData: no address");
+// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "SetPropertyData: bad driver reference");
+// 	DoIfFailed(inAddress == NULL, return kAudioHardwareIllegalOperationError, "SetPropertyData: no address");
 
 // 	// Only 2 * (N_CHANNELS + 1) + 1 properties are settable in our plugin:
 // 	//		- Whether the output stream is active.
@@ -1026,7 +1053,7 @@ unsafe extern "C" fn syfala_abort_device_configuration_change(
 // 		if (inAddress->mSelector == kAudioStreamPropertyIsActive) {
 // 			//	Changing the active state of a stream doesn't affect IO or change the structure
 // 			//	so we can just save the state and send the notification.
-// 			DoIfFailed(inDataSize != sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "syfala_SetStreamPropertyData: wrong size for the data for kAudioDevicePropertyNominalSampleRate");
+// 			DoIfFailed(inDataSize != sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "SetStreamPropertyData: wrong size for the data for kAudioDevicePropertyNominalSampleRate");
 // 			bool const new_state = (*((UInt32 const*)inData) != 0);
 
 // 			atomic_store_explicit(&IS_OUTPUT_STREAM_ACTIVE, new_state, __ATOMIC_RELAXED);
@@ -1045,7 +1072,7 @@ unsafe extern "C" fn syfala_abort_device_configuration_change(
 // 		// it changes both the scalar value property and the decibel value property
 // 		AudioObjectPropertyAddress changed_addrs[2];
 
-// 		OSStatus const status = syfala_SetControlPropertyData(
+// 		OSStatus const status = SetControlPropertyData(
 // 			inObjectID,
 // 			inAddress,
 // 			inDataSize,
@@ -1078,6 +1105,7 @@ enum Qualifier<T, U> {
     Unneeded(U),
 }
 
+// TODO: change this lol
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct PropertyData {
     get_data_size: fn(id: AudioObjectID, &AudioObjectPropertyAddress) -> RangeInclusive<UInt32>,
@@ -1114,7 +1142,7 @@ struct PropertyData {
                 input_size_bytes: UInt32,
                 // read-only
                 input_data: NonNull<std::os::raw::c_void>,
-            ) -> UInt32,
+            ),
             unsafe fn(
                 id: AudioObjectID,
                 address: &AudioObjectPropertyAddress,
@@ -1123,7 +1151,7 @@ struct PropertyData {
                 input_size_bytes: UInt32,
                 // read-only
                 input_data: NonNull<std::os::raw::c_void>,
-            ) -> UInt32,
+            ),
         >,
     >,
 }
@@ -1161,37 +1189,10 @@ fn find_property_data(
     match id {
         PLUGIN_ID => find_plugin_property_data(address),
         DEVICE_ID => find_device_property_data(address),
+        STREAM_ID => find_stream_property_data(address),
+        ctrl if audio_object_is_control(ctrl) => None,
         _ => None,
     }
-}
-
-#[inline(always)]
-fn has_property(id: AudioObjectID, address: &AudioObjectPropertyAddress) -> bool {
-    //	This method returns whether or not the plug-in object has the given property.
-
-    find_property_data(id, address).is_some()
-}
-
-#[inline(always)]
-fn is_property_settable(
-    id: AudioObjectID,
-    address: &AudioObjectPropertyAddress,
-    // None: kAudioHardwareUnknownPropertyError
-) -> Option<bool> {
-    //	This method returns whether or not the given property on the plug-in object can have its
-    //	value changed.
-
-    find_property_data(id, address).map(|data| data.read_data.is_some())
-}
-
-#[inline(always)]
-fn get_property_data_size(
-    id: AudioObjectID,
-    address: &AudioObjectPropertyAddress,
-    // None: kAudioHardwareUnknownPropertyError
-) -> Option<UInt32> {
-    //	This method returns the byte size of the property's data.
-    find_property_data(id, address).map(|data| *(data.get_data_size)(id, address).end())
 }
 
 // Not the cleanest, i know,
@@ -1249,7 +1250,7 @@ unsafe fn set_property_data(
     qual_data: *const std::os::raw::c_void,
     data_size: UInt32,
     out_data: NonNull<std::os::raw::c_void>,
-) -> Option<Result<UInt32, bool>> {
+) -> Option<Result<(), bool>> {
     let Some(data) = find_property_data(id, address) else {
         return None;
     };
@@ -1699,7 +1700,6 @@ fn find_device_property_data(
 fn find_stream_property_data(
     address: &AudioObjectPropertyAddress,
 ) -> Option<&'static PropertyData> {
-
     match address.mSelector {
         kAudioObjectPropertyBaseClass => Some(&PropertyData {
             get_data_size: |_, _| s(CLASS_ID_SIZE),
@@ -1720,669 +1720,383 @@ fn find_stream_property_data(
         kAudioObjectPropertyOwner => Some(&PropertyData {
             get_data_size: |_, _| s(OBJECT_ID_SIZE),
             write_data: Qualifier::Unneeded(|_, _, _, _, _, ptr| unsafe {
-                write_once_get_size(ptr, PLUGIN_ID)
+                write_once_get_size(ptr, DEVICE_ID)
             }),
+            read_data: None,
+        }),
+
+        kAudioObjectPropertyOwnedObjects => Some(&PropertyData {
+            // streams don't own any objects
+            get_data_size: |_, _| 0..=OBJECT_ID_SIZE.strict_mul(0),
+            write_data: Qualifier::Unneeded(|_, _, _, _, _, _| 0),
             read_data: None,
         }),
 
         kAudioObjectPropertyName => Some(&PropertyData {
             get_data_size: |_, _| s(CFSTRING_SIZE),
             write_data: Qualifier::Unneeded(|_, _, _, _, _, ptr| unsafe {
-                write_once_get_size(ptr, cfstr("Space Bar"))
+                write_once_get_size(ptr, cfstr("Output Stream"))
             }),
             read_data: None,
         }),
 
-		// case kAudioStreamPropertyDirection:
-		// case kAudioStreamPropertyTerminalType:
-		// case kAudioStreamPropertyStartingChannel:
-		// case kAudioStreamPropertyLatency:
-		// case kAudioStreamPropertyAvailableVirtualFormats:
-		// case kAudioStreamPropertyAvailablePhysicalFormats:
-		// case kAudioStreamPropertyVirtualFormat:
-		// case kAudioStreamPropertyPhysicalFormat:
-		// case kAudioStreamPropertyIsActive:
-        _ => None
+        kAudioStreamPropertyDirection => Some(&PropertyData {
+            get_data_size: |_, _| s(size_of::<UInt32>().try_into().unwrap()),
+            write_data: Qualifier::Unneeded(|_, _, _, _, _, ptr| unsafe {
+                write_once_get_size(ptr, 0)
+            }),
+            read_data: None,
+        }),
+
+        kAudioStreamPropertyTerminalType => Some(&PropertyData {
+            get_data_size: |_, _| s(size_of::<UInt32>().try_into().unwrap()),
+            write_data: Qualifier::Unneeded(|_, _, _, _, _, ptr| unsafe {
+                write_once_get_size(ptr, kAudioStreamTerminalTypeUnknown)
+            }),
+            read_data: None,
+        }),
+
+        kAudioStreamPropertyStartingChannel => Some(&PropertyData {
+            get_data_size: |_, _| s(size_of::<UInt32>().try_into().unwrap()),
+            write_data: Qualifier::Unneeded(|_, _, _, _, _, ptr| unsafe {
+                write_once_get_size(ptr, 1)
+            }),
+            read_data: None,
+        }),
+
+        kAudioStreamPropertyLatency => Some(&PropertyData {
+            get_data_size: |_, _| s(size_of::<UInt32>().try_into().unwrap()),
+            write_data: Qualifier::Unneeded(|_, _, _, _, _, ptr| unsafe {
+                write_once_get_size(ptr, 0)
+            }),
+            read_data: None,
+        }),
+
+        kAudioStreamPropertyAvailableVirtualFormats
+        | kAudioStreamPropertyAvailablePhysicalFormats => Some(&PropertyData {
+            get_data_size: |_, _| {
+                s(size_of::<AudioStreamRangedDescription>()
+                    .strict_mul(1)
+                    .try_into()
+                    .unwrap())
+            },
+            write_data: Qualifier::Unneeded(|_, _, _, _, data_size, ptr| unsafe {
+                write_get_size(ptr, data_size.try_into().unwrap(), [FORMAT])
+            }),
+            read_data: None,
+        }),
+
+        kAudioStreamPropertyVirtualFormat | kAudioStreamPropertyPhysicalFormat => {
+            Some(&PropertyData {
+                get_data_size: |_, _| {
+                    s(size_of::<AudioStreamBasicDescription>().try_into().unwrap())
+                },
+                write_data: Qualifier::Unneeded(|_, _, _, _, _, ptr| unsafe {
+                    write_once_get_size(ptr, FORMAT.mFormat)
+                }),
+                read_data: None,
+            })
+        }
+
+        kAudioStreamPropertyIsActive => Some(&PropertyData {
+            get_data_size: |_, _| s(size_of::<UInt32>().try_into().unwrap()),
+            write_data: Qualifier::Unneeded(|_, _, _, _, _, ptr| unsafe {
+                write_once_get_size(
+                    ptr,
+                    UInt32::from(IS_OUTPUT_STREAM_ACTIVE.load(Ordering::Relaxed)),
+                )
+            }),
+            read_data: Some(Qualifier::Unneeded(|obj_id, addr, _, _, _, data_ptr| {
+                let data_ptr = data_ptr.cast::<UInt32>();
+                let new_state = unsafe { data_ptr.read() } != 0;
+
+                if IS_OUTPUT_STREAM_ACTIVE.swap(new_state, Ordering::Relaxed) != new_state {
+                    if let Some(host) = unsafe { HOST } {
+                        if let Some(properties_changed_callback) = host.PropertiesChanged {
+                            unsafe { properties_changed_callback(host, obj_id, 1, addr) };
+                        }
+                    }
+                }
+            })),
+        }),
+        _ => None,
     }
 }
 
-// #pragma mark Stream Property Operations
-
-// static Boolean	syfala_HasStreamProperty(
-// 	AudioObjectPropertyAddress const* inAddress
-// ) {
-// 	//	This method returns whether or not the given object has the given property.
-// 	switch(inAddress->mSelector)
-// 	{
-// 		case kAudioObjectPropertyBaseClass:
-// 		case kAudioObjectPropertyClass:
-// 		case kAudioObjectPropertyOwner:
-// 		case kAudioObjectPropertyOwnedObjects:
-// 		case kAudioObjectPropertyName:
-
-// 		case kAudioStreamPropertyDirection:
-// 		case kAudioStreamPropertyTerminalType:
-// 		case kAudioStreamPropertyStartingChannel:
-// 		case kAudioStreamPropertyLatency:
-// 		case kAudioStreamPropertyAvailableVirtualFormats:
-// 		case kAudioStreamPropertyAvailablePhysicalFormats:
-// 		case kAudioStreamPropertyVirtualFormat:
-// 		case kAudioStreamPropertyPhysicalFormat:
-// 		case kAudioStreamPropertyIsActive:
-// 			return true;
-// 	};
-
-// 	return false;
-// }
-
-// static OSStatus	syfala_IsStreamPropertySettable(
-// 	AudioObjectPropertyAddress const* const inAddress,
-// 	Boolean* const outIsSettable
-// ) {
-// 	//	This method returns whether or not the given property on the object can have its value
-// 	//	changed.
-// 	switch(inAddress->mSelector)
-// 	{
-// 		case kAudioObjectPropertyBaseClass:
-// 		case kAudioObjectPropertyClass:
-// 		case kAudioObjectPropertyOwner:
-// 		case kAudioObjectPropertyOwnedObjects:
-// 		case kAudioObjectPropertyName:
-
-// 		case kAudioStreamPropertyDirection:
-// 		case kAudioStreamPropertyTerminalType:
-// 		case kAudioStreamPropertyStartingChannel:
-// 		case kAudioStreamPropertyLatency:
-// 		case kAudioStreamPropertyAvailableVirtualFormats:
-// 		case kAudioStreamPropertyAvailablePhysicalFormats:
-// 		case kAudioStreamPropertyVirtualFormat:
-// 		case kAudioStreamPropertyPhysicalFormat:
-// 			*outIsSettable = false;
-// 			break;
-
-// 		case kAudioStreamPropertyIsActive:
-// 			*outIsSettable = true;
-// 			break;
-
-// 		default:
-// 			return kAudioHardwareUnknownPropertyError;
-// 	};
-
-// 	return kAudioHardwareNoError;
-// }
-
-// static OSStatus	syfala_GetStreamPropertyDataSize(
-// 	AudioObjectPropertyAddress const* const inAddress,
-// 	UInt32* const outDataSize
-// ) {
-// 	//	This method returns the byte size of the property's data.
-// 	switch(inAddress->mSelector)
-// 	{
-// 		case kAudioObjectPropertyBaseClass:
-// 			*outDataSize = sizeof(AudioClassID);
-// 			break;
-
-// 		case kAudioObjectPropertyClass:
-// 			*outDataSize = sizeof(AudioClassID);
-// 			break;
-
-// 		case kAudioObjectPropertyOwner:
-// 			*outDataSize = sizeof(AudioObjectID);
-// 			break;
-
-// 		case kAudioObjectPropertyOwnedObjects:
-// 			*outDataSize = 0 * sizeof(AudioObjectID);
-// 			break;
-
-// 		case kAudioObjectPropertyName:
-// 			*outDataSize = sizeof(CFStringRef);
-// 			break;
-
-// 		case kAudioStreamPropertyDirection:
-// 			*outDataSize = sizeof(UInt32);
-// 			break;
-
-// 		case kAudioStreamPropertyTerminalType:
-// 			*outDataSize = sizeof(UInt32);
-// 			break;
-
-// 		case kAudioStreamPropertyStartingChannel:
-// 			*outDataSize = sizeof(UInt32);
-// 			break;
-
-// 		case kAudioStreamPropertyLatency:
-// 			*outDataSize = sizeof(UInt32);
-// 			break;
-
-// 		case kAudioStreamPropertyAvailableVirtualFormats:
-// 		case kAudioStreamPropertyAvailablePhysicalFormats:
-// 			*outDataSize = 1 * sizeof(AudioStreamRangedDescription);
-// 			break;
-
-// 		case kAudioStreamPropertyVirtualFormat:
-// 		case kAudioStreamPropertyPhysicalFormat:
-// 			*outDataSize = sizeof(AudioStreamBasicDescription);
-// 			break;
-
-// 		case kAudioStreamPropertyIsActive:
-// 			*outDataSize = sizeof(UInt32);
-// 			break;
-
-// 		default:
-// 			return kAudioHardwareUnknownPropertyError;
-// 	};
-
-// 	return kAudioHardwareNoError;
-// }
-
-// static OSStatus	syfala_GetStreamPropertyData(
-// 	AudioObjectPropertyAddress const* const inAddress,
-// 	UInt32 const inDataSize,
-// 	UInt32* const outDataSize,
-// 	void* const outData
-// ) {
-// 	switch(inAddress->mSelector)
-// 	{
-// 		case kAudioObjectPropertyBaseClass:
-// 			//	The base class for kAudioStreamClassID is kAudioObjectClassID
-// 			DoIfFailed(inDataSize < sizeof(AudioClassID), return kAudioHardwareBadPropertySizeError, "syfala_GetStreamPropertyData: not enough space for the return value of kAudioObjectPropertyBaseClass for the stream");
-// 			*((AudioClassID*)outData) = kAudioObjectClassID;
-// 			*outDataSize = sizeof(AudioClassID);
-// 			break;
-
-// 		case kAudioObjectPropertyClass:
-// 			//	The class is always kAudioStreamClassID for streams created by drivers
-// 			DoIfFailed(inDataSize < sizeof(AudioClassID), return kAudioHardwareBadPropertySizeError, "syfala_GetStreamPropertyData: not enough space for the return value of kAudioObjectPropertyClass for the stream");
-// 			*((AudioClassID*)outData) = kAudioStreamClassID;
-// 			*outDataSize = sizeof(AudioClassID);
-// 			break;
-
-// 		case kAudioObjectPropertyOwner:
-// 			//	The stream's owner is the device object
-// 			DoIfFailed(inDataSize < sizeof(AudioObjectID), return kAudioHardwareBadPropertySizeError, "syfala_GetStreamPropertyData: not enough space for the return value of kAudioObjectPropertyOwner for the stream");
-// 			*((AudioObjectID*)outData) = DEVICE_ID;
-// 			*outDataSize = sizeof(AudioObjectID);
-// 			break;
-
-// 		case kAudioObjectPropertyOwnedObjects:
-// 			//	Streams do not own any objects
-// 			*outDataSize = 0 * sizeof(AudioObjectID);
-// 			break;
-
-// 		case kAudioObjectPropertyName:
-// 			//	This is the human readable name of the stream
-// 			DoIfFailed(inDataSize < sizeof(CFStringRef), return kAudioHardwareBadPropertySizeError, "syfala_GetStreamPropertyData: not enough space for the return value of kAudioObjectPropertyName for the stream");
-// 			*((CFStringRef*)outData) = CFSTR("Output Stream");
-// 			*outDataSize = sizeof(CFStringRef);
-// 			break;
-
-// 		case kAudioStreamPropertyDirection:
-// 			//	This returns whether the stream is an input stream or an output stream.
-// 			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "syfala_GetStreamPropertyData: not enough space for the return value of kAudioStreamPropertyDirection for the stream");
-// 			*((UInt32*)outData) = 0;
-// 			*outDataSize = sizeof(UInt32);
-// 			break;
-
-// 		case kAudioStreamPropertyTerminalType:
-// 			//	This returns a value that indicates what is at the other end of the stream
-// 			//	such as a speaker or headphones, or a microphone. Values for this property
-// 			//	are defined in <CoreAudio/AudioHardwareBase.h>
-// 			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "syfala_GetStreamPropertyData: not enough space for the return value of kAudioStreamPropertyTerminalType for the stream");
-// 			*((UInt32*)outData) = kAudioStreamTerminalTypeUnknown;
-// 			*outDataSize = sizeof(UInt32);
-// 			break;
-
-// 		case kAudioStreamPropertyStartingChannel:
-// 			//	This property returns the absolute channel number for the first channel in
-// 			//	the stream. For exmaple, if a device has two output streams with two
-// 			//	channels each, then the starting channel number for the first stream is 1
-// 			//	and ths starting channel number fo the second stream is 3.
-// 			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "syfala_GetStreamPropertyData: not enough space for the return value of kAudioStreamPropertyStartingChannel for the stream");
-// 			*((UInt32*)outData) = 1;
-// 			*outDataSize = sizeof(UInt32);
-// 			break;
-
-// 		case kAudioStreamPropertyLatency:
-// 			//	This property returns any additonal presentation latency the stream has.
-// 			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "syfala_GetStreamPropertyData: not enough space for the return value of kAudioStreamPropertyStartingChannel for the stream");
-// 			*((UInt32*)outData) = 0;
-// 			*outDataSize = sizeof(UInt32);
-// 			break;
-
-// 		case kAudioStreamPropertyAvailableVirtualFormats:
-// 		case kAudioStreamPropertyAvailablePhysicalFormats:
-// 		{
-// 			//	This returns an array of AudioStreamRangedDescriptions that describe what
-// 			//	formats are supported.
-
-// 			//	Calculate the number of items that have been requested. Note that this
-// 			//	number is allowed to be smaller than the actual size of the list. In such
-// 			//	case, only that number of items will be returned
-// 			UInt32 const n_items = inDataSize / sizeof(AudioStreamRangedDescription);
-// 			UInt32 const n_items_clamped = (n_items > 1) ? 1 : n_items;
-
-// 			AudioStreamRangedDescription* const data = (AudioStreamRangedDescription*) outData;
-
-// 			UInt32 index = 0;
-
-// 			if (index < n_items_clamped) data[index++] = FORMAT;
-
-// 			//	report how much we wrote
-// 			*outDataSize = n_items_clamped * sizeof(AudioStreamRangedDescription);
-// 			break;
-// 		}
-
-// 		case kAudioStreamPropertyVirtualFormat:
-// 		case kAudioStreamPropertyPhysicalFormat:
-// 			//	This returns the current format of the stream in an
-// 			//	AudioStreamBasicDescription. Note that we need to hold the state lock to get
-// 			//	this value.
-// 			//	Note that for devices that don't override the mix operation, the virtual
-// 			//	format has to be the same as the physical format.
-// 			DoIfFailed(inDataSize < sizeof(AudioStreamBasicDescription), return kAudioHardwareBadPropertySizeError, "syfala_GetStreamPropertyData: not enough space for the return value of kAudioStreamPropertyVirtualFormat for the stream");
-// 			*((AudioStreamBasicDescription*)outData) = FORMAT.mFormat;
-// 			*outDataSize = sizeof(AudioStreamBasicDescription);
-// 			break;
-
-// 		case kAudioStreamPropertyIsActive:
-// 			//	This property tells the device whether or not the given stream is going to
-// 			//	be used for IO. Note that we need to take the state lock to examine this
-// 			//	value.
-// 			DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "syfala_GetStreamPropertyData: not enough space for the return value of kAudioStreamPropertyIsActive for the stream");
-// 			*((UInt32*)outData) = atomic_load_explicit(&IS_OUTPUT_STREAM_ACTIVE, __ATOMIC_RELAXED);
-// 			*outDataSize = sizeof(UInt32);
-// 			break;
-
-// 		default:
-// 			return kAudioHardwareUnknownPropertyError;
-// 	};
-
-// 	return kAudioHardwareNoError;
-// }
-
-// #pragma mark Control Property Operations
-
-// static Boolean	syfala_HasControlProperty(
-// 	AudioObjectID const inObjectID,
-// 	AudioObjectPropertyAddress const* const inAddress
-// ) {
-// 	switch (inAddress->mSelector) {
-// 		case kAudioObjectPropertyBaseClass:
-// 		case kAudioObjectPropertyClass:
-// 		case kAudioObjectPropertyOwner:
-// 		case kAudioObjectPropertyOwnedObjects:
-// 		case kAudioControlPropertyScope:
-// 		case kAudioControlPropertyElement:
-// 			return true;
-// 	}
-
-// 	if (control_is_volume(inObjectID)) {
-// 		switch (inAddress->mSelector) {
-// 			case kAudioLevelControlPropertyScalarValue:
-// 			case kAudioLevelControlPropertyDecibelValue:
-// 			case kAudioLevelControlPropertyDecibelRange:
-// 			case kAudioLevelControlPropertyConvertScalarToDecibels:
-// 			case kAudioLevelControlPropertyConvertDecibelsToScalar:
-// 				return true;
-// 		}
-// 	} else {
-// 		if (inAddress->mSelector == kAudioBooleanControlPropertyValue) {
-// 			return true;
-// 		}
-// 	}
-
-// 	return false;
-// }
-
-// static OSStatus	syfala_IsControlPropertySettable(
-// 	AudioObjectID const inObjectID,
-// 	AudioObjectPropertyAddress const* const inAddress,
-// 	Boolean* const outIsSettable
-// ) {
-// 	switch (inAddress->mSelector) {
-// 		case kAudioObjectPropertyBaseClass:
-// 		case kAudioObjectPropertyClass:
-// 		case kAudioObjectPropertyOwner:
-// 		case kAudioObjectPropertyOwnedObjects:
-// 		case kAudioControlPropertyScope:
-// 		case kAudioControlPropertyElement:
-// 			*outIsSettable = false;
-// 			return kAudioHardwareNoError;
-// 	}
-
-// 	if (control_is_volume(inObjectID)) {
-// 		switch (inAddress->mSelector) {
-// 			case kAudioLevelControlPropertyDecibelRange:
-// 			case kAudioLevelControlPropertyConvertScalarToDecibels:
-// 			case kAudioLevelControlPropertyConvertDecibelsToScalar:
-// 				*outIsSettable = false;
-// 				return kAudioHardwareNoError;
-
-// 			case kAudioLevelControlPropertyScalarValue:
-// 			case kAudioLevelControlPropertyDecibelValue:
-// 				*outIsSettable = true;
-// 				return kAudioHardwareNoError;
-// 		}
-// 	} else {
-// 		if (inAddress->mSelector == kAudioBooleanControlPropertyValue) {
-// 			*outIsSettable = true;
-// 			return kAudioHardwareNoError;
-// 		}
-// 	}
-
-// 	return kAudioHardwareUnknownPropertyError;
-// }
-
-// static OSStatus	syfala_GetControlPropertyDataSize(
-// 	AudioObjectID const inObjectID,
-// 	AudioObjectPropertyAddress const* const inAddress,
-// 	UInt32* const outDataSize
-// ) {
-// 	switch (inAddress->mSelector) {
-// 		case kAudioObjectPropertyBaseClass:
-// 			*outDataSize = sizeof(AudioClassID);
-// 			return kAudioHardwareNoError;
-
-// 		case kAudioObjectPropertyClass:
-// 			*outDataSize = sizeof(AudioClassID);
-// 			return kAudioHardwareNoError;
-
-// 		case kAudioObjectPropertyOwner:
-// 			*outDataSize = sizeof(AudioObjectID);
-// 			return kAudioHardwareNoError;
-
-// 		case kAudioObjectPropertyOwnedObjects:
-// 			*outDataSize = 0 * sizeof(AudioObjectID);
-// 			return kAudioHardwareNoError;
-
-// 		case kAudioControlPropertyScope:
-// 			*outDataSize = sizeof(AudioObjectPropertyScope);
-// 			return kAudioHardwareNoError;
-
-// 		case kAudioControlPropertyElement:
-// 			*outDataSize = sizeof(AudioObjectPropertyElement);
-// 			return kAudioHardwareNoError;
-// 	}
-
-// 	if (control_is_volume(inObjectID)) {
-// 		switch (inAddress->mSelector) {
-// 			case kAudioLevelControlPropertyScalarValue:
-// 				*outDataSize = sizeof(Float32);
-// 				return kAudioHardwareNoError;
-
-// 			case kAudioLevelControlPropertyDecibelValue:
-// 				*outDataSize = sizeof(Float32);
-// 				return kAudioHardwareNoError;
-
-// 			case kAudioLevelControlPropertyDecibelRange:
-// 				*outDataSize = sizeof(AudioValueRange);
-// 				return kAudioHardwareNoError;
-
-// 			case kAudioLevelControlPropertyConvertScalarToDecibels:
-// 				*outDataSize = sizeof(Float32);
-// 				return kAudioHardwareNoError;
-
-// 			case kAudioLevelControlPropertyConvertDecibelsToScalar:
-// 				*outDataSize = sizeof(Float32);
-// 				return kAudioHardwareNoError;
-// 		}
-// 	} else {
-// 		if (inAddress->mSelector == kAudioBooleanControlPropertyValue) {
-// 			*outDataSize = sizeof(UInt32);
-// 			return kAudioHardwareNoError;
-// 		}
-// 	}
-
-// 	return kAudioHardwareUnknownPropertyError;
-// }
-
-// static OSStatus	syfala_GetControlPropertyData(
-// 	AudioObjectID const inObjectID,
-// 	AudioObjectPropertyAddress const* const inAddress,
-// 	UInt32 const inDataSize,
-// 	UInt32* const outDataSize,
-// 	void* const outData
-// ) {
-// 	AudioObjectPropertyElement const ctrl_index = control_channel_index(inObjectID);
-
-// 	switch (inAddress->mSelector)
-// 	{
-// 		case kAudioObjectPropertyOwner:
-// 			//	The control's owner is the device object
-// 			DoIfFailed(inDataSize < sizeof(AudioObjectID), return kAudioHardwareBadPropertySizeError, "syfala_GetControlPropertyData: not enough space for the return value of kAudioObjectPropertyOwner for the volume control");
-// 			*((AudioObjectID*)outData) = DEVICE_ID;
-// 			*outDataSize = sizeof(AudioObjectID);
-// 			return kAudioHardwareNoError;
-
-// 		case kAudioObjectPropertyOwnedObjects:
-// 			//	Controls do not own any objects
-// 			*outDataSize = 0 * sizeof(AudioObjectID);
-// 			return kAudioHardwareNoError;
-
-// 		case kAudioControlPropertyScope:
-// 			//	This property returns the scope that the control is attached to.
-// 			DoIfFailed(inDataSize < sizeof(AudioObjectPropertyScope), return kAudioHardwareBadPropertySizeError, "syfala_GetControlPropertyData: not enough space for the return value of kAudioControlPropertyScope for the volume control");
-// 			*((AudioObjectPropertyScope*)outData) = kAudioObjectPropertyScopeOutput;
-// 			*outDataSize = sizeof(AudioObjectPropertyScope);
-// 			return kAudioHardwareNoError;
-
-// 		case kAudioControlPropertyElement:
-// 			//	This property returns the element that the control is attached to.
-// 			DoIfFailed(inDataSize < sizeof(AudioObjectPropertyElement), return kAudioHardwareBadPropertySizeError, "syfala_GetControlPropertyData: not enough space for the return value of kAudioControlPropertyElement for the volume control");
-// 			*((AudioObjectPropertyElement*)outData) = ctrl_index;
-// 			*outDataSize = sizeof(AudioObjectPropertyElement);
-// 			return kAudioHardwareNoError;
-
-// 	}
-
-// 	//	Note that for each object, this driver implements all the required properties plus a few
-// 	//	extras that are useful but not required.
-// 	//
-// 	//	Also, since most of the data that will get returned is static, there are few instances where
-// 	//	it is necessary to lock the state mutex.
-// 	if (control_is_volume(inObjectID)) {
-// 		// we are a volume control
-// 		switch(inAddress->mSelector)
-// 		{
-// 			case kAudioObjectPropertyBaseClass:
-// 				//	The base class for kAudioVolumeControlClassID is kAudioLevelControlClassID
-// 				DoIfFailed(inDataSize < sizeof(AudioClassID), return kAudioHardwareBadPropertySizeError, "syfala_GetControlPropertyData: not enough space for the return value of kAudioObjectPropertyBaseClass for the volume control");
-// 				*((AudioClassID*)outData) = kAudioLevelControlClassID;
-// 				*outDataSize = sizeof(AudioClassID);
-// 				return kAudioHardwareNoError;
-
-// 			case kAudioObjectPropertyClass:
-// 				//	Volume controls are of the class, kAudioVolumeControlClassID
-// 				DoIfFailed(inDataSize < sizeof(AudioClassID), return kAudioHardwareBadPropertySizeError, "syfala_GetControlPropertyData: not enough space for the return value of kAudioObjectPropertyClass for the volume control");
-// 				*((AudioClassID*)outData) = kAudioVolumeControlClassID;
-// 				*outDataSize = sizeof(AudioClassID);
-// 				return kAudioHardwareNoError;
-
-// 			case kAudioLevelControlPropertyScalarValue: {
-// 				//	This returns the value of the control in the normalized range of 0 to 1.
-// 				DoIfFailed(inDataSize < sizeof(Float32), return kAudioHardwareBadPropertySizeError, "syfala_GetControlPropertyData: not enough space for the return value of kAudioLevelControlPropertyScalarValue for the volume control");
-// 				Float32 const gain = atomic_load_explicit(&OUTPUT_VOLUME[ctrl_index], __ATOMIC_RELAXED);
-// 				Float32 const db = gain_to_db(gain);
-// 				Float32 const db_clamped = fminf(fmaxf(db, VOL_MIN_DB), VOL_MAX_DB);
-// 				Float32 const norm = linear_remap(db, VOL_MIN_DB, VOL_DB_RANGE, 0.0f, 1.0f);
-// 				*((Float32*)outData) = sq(norm);
-// 				*outDataSize = sizeof(Float32);
-// 				return kAudioHardwareNoError;
-// 			}
-
-// 			case kAudioLevelControlPropertyDecibelValue: {
-// 				//	This returns the dB value of the control.
-// 				DoIfFailed(inDataSize < sizeof(Float32), return kAudioHardwareBadPropertySizeError, "syfala_GetControlPropertyData: not enough space for the return value of kAudioLevelControlPropertyDecibelValue for the volume control");
-
-// 				Float32 const gain = atomic_load_explicit(&OUTPUT_VOLUME[ctrl_index], __ATOMIC_RELAXED);
-// 				Float32 const db = gain_to_db(gain);
-// 				Float32 const db_clamped = fminf(fmaxf(db, VOL_MIN_DB), VOL_MAX_DB);
-// 				*((Float32*)outData) = db_clamped;
-
-// 				//	report how much we wrote
-// 				*outDataSize = sizeof(Float32);
-// 				return kAudioHardwareNoError;
-// 			}
-
-// 			case kAudioLevelControlPropertyDecibelRange: {
-// 				//	This returns the dB range of the control.
-// 				DoIfFailed(inDataSize < sizeof(AudioValueRange), return kAudioHardwareBadPropertySizeError, "syfala_GetControlPropertyData: not enough space for the return value of kAudioLevelControlPropertyDecibelRange for the volume control");
-
-// 				AudioValueRange* const data = (AudioValueRange*) outData;
-
-// 				data->mMinimum = VOL_MIN_DB;
-// 				data->mMaximum = VOL_MAX_DB;
-// 				*outDataSize = sizeof(AudioValueRange);
-// 				return kAudioHardwareNoError;
-// 			}
-
-// 			case kAudioLevelControlPropertyConvertScalarToDecibels: {
-// 				//	This takes the scalar value in outData and converts it to dB.
-// 				DoIfFailed(inDataSize < sizeof(Float32), return kAudioHardwareBadPropertySizeError, "syfala_GetControlPropertyData: not enough space for the return value of kAudioLevelControlPropertyDecibelValue for the volume control");
-
-// 				Float32* const data = (Float32*) outData;
-
-// 				Float32 const val = sqrtf(fminf(fmaxf(*data, 0.0f), 1.0f));
-
-// 				*data = linear_remap(val, 0.0f, 1.0f, VOL_MIN_DB, VOL_DB_RANGE);
-
-// 				//	report how much we wrote
-// 				*outDataSize = sizeof(Float32);
-// 				return kAudioHardwareNoError;
-// 			}
-
-// 			case kAudioLevelControlPropertyConvertDecibelsToScalar: {
-// 				DoIfFailed(inDataSize < sizeof(Float32), return kAudioHardwareBadPropertySizeError, "syfala_GetControlPropertyData: not enough space for the return value of kAudioLevelControlPropertyScalarValue for the volume control");
-// 				//	This takes the dB value in outData and converts it to scalar.
-// 				Float32* const data = (Float32*) outData;
-
-// 				Float32 const val = fminf(fmaxf(*data, VOL_MIN_DB), VOL_MAX_DB);
-
-// 				*data = sq(linear_remap(val, VOL_MIN_DB, VOL_DB_RANGE, 0.0f, 1.0f));
-
-// 				//	report how much we wrote
-// 				*outDataSize = sizeof(Float32);
-// 				return kAudioHardwareNoError;
-// 			}
-// 		}
-// 	} else {
-// 		// we are a mute control
-// 		switch(inAddress->mSelector)
-// 		{
-// 			case kAudioObjectPropertyBaseClass:
-// 				//	The base class for kAudioMuteControlClassID is kAudioBooleanControlClassID
-// 				DoIfFailed(inDataSize < sizeof(AudioClassID), return kAudioHardwareBadPropertySizeError, "syfala_GetControlPropertyData: not enough space for the return value of kAudioObjectPropertyBaseClass for the mute control");
-// 				*((AudioClassID*)outData) = kAudioBooleanControlClassID;
-// 				*outDataSize = sizeof(AudioClassID);
-// 				return kAudioHardwareNoError;
-
-// 			case kAudioObjectPropertyClass:
-// 				//	Mute controls are of the class, kAudioMuteControlClassID
-// 				DoIfFailed(inDataSize < sizeof(AudioClassID), return kAudioHardwareBadPropertySizeError, "syfala_GetControlPropertyData: not enough space for the return value of kAudioObjectPropertyClass for the mute control");
-// 				*((AudioClassID*)outData) = kAudioMuteControlClassID;
-// 				*outDataSize = sizeof(AudioClassID);
-// 				return kAudioHardwareNoError;
-
-// 			case kAudioBooleanControlPropertyValue:
-// 				//	This returns the value of the mute control where 0 means that mute is off
-// 				//	and audio can be heard and 1 means that mute is on and audio cannot be heard.
-// 				//	Note that we need to take the state lock to examine this value.
-// 				DoIfFailed(inDataSize < sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "syfala_GetControlPropertyData: not enough space for the return value of kAudioBooleanControlPropertyValue for the mute control");
-// 				*((UInt32*)outData) = (UInt32) atomic_load_explicit(&OUTPUT_MUTE[ctrl_index], __ATOMIC_RELAXED);
-// 				*outDataSize = sizeof(UInt32);
-// 				return kAudioHardwareNoError;
-// 		}
-// 	}
-
-// 	return kAudioHardwareUnknownPropertyError;
-// }
-
-// static OSStatus	syfala_SetControlPropertyData(
-// 	AudioObjectID const inObjectID,
-// 	AudioObjectPropertyAddress const* const inAddress,
-// 	UInt32 const inDataSize,
-// 	void const* const inData,
-// 	UInt32* const outNumberPropertiesChanged,
-// 	AudioObjectPropertyAddress outChangedAddresses[2]
-// ) {
-// 	//	initialize the returned number of changed properties
-// 	*outNumberPropertiesChanged = 0;
-
-// 	AudioObjectPropertyElement const ctrl_index = control_channel_index(inObjectID);
-
-// 	if (control_is_volume(inObjectID)) {
-// 		if (inAddress->mSelector == kAudioLevelControlPropertyScalarValue) {
-// 			// Note that if this value changes, it is implied that the dB value changed too.
-// 			DoIfFailed(inDataSize != sizeof(Float32), return kAudioHardwareBadPropertySizeError, "syfala_SetControlPropertyData: wrong size for the data for kAudioLevelControlPropertyScalarValue");
-
-// 			Float32 const new_vol_norm = sqrtf(fminf(fmaxf(*((Float32 const*)inData), 0.0f), 1.0f));
-// 			Float32 const new_vol_db = linear_remap(new_vol_norm, 0.0f, 1.0f, VOL_MIN_DB, VOL_DB_RANGE);
-// 			Float32 const new_vol_gain = db_to_gain(new_vol_db);
-
-// 			atomic_store_explicit(&OUTPUT_VOLUME[ctrl_index], new_vol_gain, __ATOMIC_RELAXED);
-
-// 			*outNumberPropertiesChanged = 2;
-
-// 			AudioObjectPropertyAddress* const first_addr = &outChangedAddresses[0];
-// 			first_addr->mSelector = kAudioLevelControlPropertyScalarValue;
-// 			first_addr->mScope = kAudioObjectPropertyScopeOutput;
-// 			first_addr->mElement = ctrl_index;
-
-// 			AudioObjectPropertyAddress* const second_addr = &outChangedAddresses[1];
-// 			second_addr->mSelector = kAudioLevelControlPropertyDecibelValue;
-// 			second_addr->mScope = kAudioObjectPropertyScopeOutput;
-// 			second_addr->mElement = ctrl_index;
-
-// 			return kAudioHardwareNoError;
-
-// 		} else if (inAddress->mSelector == kAudioLevelControlPropertyDecibelValue) {
-// 			//	Note that if this value changes, it is implied that the scalar value changes as well.
-// 			DoIfFailed(inDataSize != sizeof(Float32), return kAudioHardwareBadPropertySizeError, "syfala_SetControlPropertyData: wrong size for the data for kAudioLevelControlPropertyScalarValue");
-
-// 			Float32 const new_vol_db = fminf(fmaxf(*((const Float32*)inData), VOL_MIN_DB), VOL_MAX_DB);
-// 			Float32 const new_vol_gain = db_to_gain(new_vol_db);
-
-// 			atomic_store_explicit(&OUTPUT_VOLUME[ctrl_index], new_vol_gain, __ATOMIC_RELAXED);
-
-// 			*outNumberPropertiesChanged = 2;
-
-// 			AudioObjectPropertyAddress* const first_addr = &outChangedAddresses[0];
-// 			first_addr->mSelector = kAudioLevelControlPropertyDecibelValue;
-// 			first_addr->mScope = kAudioObjectPropertyScopeOutput;
-// 			first_addr->mElement = ctrl_index;
-
-// 			AudioObjectPropertyAddress* const second_addr = &outChangedAddresses[1];
-// 			second_addr->mSelector = kAudioLevelControlPropertyScalarValue;
-// 			second_addr->mScope = kAudioObjectPropertyScopeOutput;
-// 			second_addr->mElement = ctrl_index;
-
-// 			return kAudioHardwareNoError;
-// 		}
-
-// 		return kAudioHardwareUnknownPropertyError;
-// 	} else {
-// 		if (inAddress->mSelector ==  kAudioBooleanControlPropertyValue) {
-// 			DoIfFailed(inDataSize != sizeof(UInt32), return kAudioHardwareBadPropertySizeError, "syfala_SetControlPropertyData: wrong size for the data for kAudioBooleanControlPropertyValue");
-
-// 			atomic_store_explicit(&OUTPUT_MUTE[ctrl_index], *((const UInt32*)inData) != 0, __ATOMIC_RELAXED);
-
-// 			*outNumberPropertiesChanged = 1;
-
-// 			AudioObjectPropertyAddress* const addr = &outChangedAddresses[0];
-// 			addr->mSelector = kAudioBooleanControlPropertyValue;
-// 			addr->mScope = kAudioObjectPropertyScopeOutput;
-// 			addr->mElement = kAudioObjectPropertyElementMain;
-
-// 			return kAudioHardwareNoError;
-// 		}
-
-// 		return kAudioHardwareUnknownPropertyError;
-// 	}
-// }
+fn find_control_property_data(
+    is_volume: bool,
+    _ctrl_index: usize,
+    address: &AudioObjectPropertyAddress,
+) -> Option<&'static PropertyData> {
+    let selector = address.mSelector;
+
+    match selector {
+        kAudioObjectPropertyOwner => {
+            return Some(&PropertyData {
+                get_data_size: |_, _| s(OBJECT_ID_SIZE),
+                write_data: Qualifier::Unneeded(|_, _, _, _, _, ptr| unsafe {
+                    write_once_get_size(ptr, DEVICE_ID)
+                }),
+                read_data: None,
+            });
+        }
+
+        kAudioObjectPropertyOwnedObjects => {
+            return Some(&PropertyData {
+                // controls don't own any objects
+                get_data_size: |_, _| 0..=OBJECT_ID_SIZE.strict_mul(0),
+                write_data: Qualifier::Unneeded(|_, _, _, _, _, _| 0),
+                read_data: None,
+            });
+        }
+
+        //	This property returns the scope that the control is attached to.
+        kAudioControlPropertyScope => {
+            return Some(&PropertyData {
+                get_data_size: |_, _| s(size_of::<AudioObjectPropertyScope>().try_into().unwrap()),
+                write_data: Qualifier::Unneeded(|_, _, _, _, _, ptr| unsafe {
+                    write_once_get_size(ptr, kAudioObjectPropertyScopeOutput)
+                }),
+                read_data: None,
+            });
+        }
+
+        //	This property returns the element that the control is attached to.
+        kAudioControlPropertyElement => {
+            return Some(&PropertyData {
+                get_data_size: |_, _| {
+                    s(size_of::<AudioObjectPropertyElement>().try_into().unwrap())
+                },
+                write_data: Qualifier::Unneeded(|id, _, _, _, _, ptr| {
+                    let ctrl_idx: AudioObjectPropertyElement = control_channel_index(id);
+                    unsafe { write_once_get_size(ptr, ctrl_idx) }
+                }),
+                read_data: None,
+            });
+        }
+
+        _ => (),
+    }
+
+    if is_volume {
+        // we are a volume control
+        match selector {
+            kAudioObjectPropertyBaseClass => {
+                return Some(&PropertyData {
+                    get_data_size: |_, _| s(CLASS_ID_SIZE),
+                    write_data: Qualifier::Unneeded(|_, _, _, _, _, ptr| unsafe {
+                        write_once_get_size(ptr, kAudioLevelControlClassID)
+                    }),
+                    read_data: None,
+                });
+            }
+
+            kAudioObjectPropertyClass => {
+                return Some(&PropertyData {
+                    get_data_size: |_, _| s(CLASS_ID_SIZE),
+                    write_data: Qualifier::Unneeded(|_, _, _, _, _, ptr| unsafe {
+                        write_once_get_size(ptr, kAudioVolumeControlClassID)
+                    }),
+                    read_data: None,
+                });
+            }
+
+            kAudioLevelControlPropertyScalarValue => {
+                return Some(&PropertyData {
+                    get_data_size: |_, _| s(size_of::<Float32>().try_into().unwrap()),
+                    write_data: Qualifier::Unneeded(|id, _, _, _, _, ptr| unsafe {
+                        let ctrl_idx = usize::try_from(control_channel_index(id)).unwrap();
+                        write_once_get_size(ptr, volume_control_norm_val(ctrl_idx).unwrap())
+                    }),
+                    read_data: Some(Qualifier::Unneeded(|id, addr, _, _, _, data_ptr| {
+                        let ctrl_elem = control_channel_index(id);
+                        let ctrl_idx: usize = ctrl_elem.try_into().unwrap();
+
+                        let data_ptr = data_ptr.cast::<Float32>();
+                        let new_norm_val = unsafe { data_ptr.read() };
+
+                        let new_gain = norm_to_gain(new_norm_val);
+
+                        OUTPUT_VOLUME
+                            .get(ctrl_idx)
+                            .unwrap()
+                            .store(new_gain, Ordering::Relaxed);
+
+                        if let Some(host) = unsafe { HOST } {
+                            if let Some(properties_changed_callback) = host.PropertiesChanged {
+                                // Note that if this value changes, it is implied
+                                // that the decibel value changed as well
+                                let changed_prop_addrs = [
+                                    *addr,
+                                    AudioObjectPropertyAddress {
+                                        mSelector: kAudioLevelControlPropertyDecibelValue,
+                                        ..*addr
+                                    },
+                                ];
+
+                                unsafe {
+                                    properties_changed_callback(
+                                        host,
+                                        id,
+                                        changed_prop_addrs.len().try_into().unwrap(),
+                                        changed_prop_addrs.as_ptr(),
+                                    )
+                                };
+                            }
+                        }
+                    })),
+                });
+            }
+
+            kAudioLevelControlPropertyDecibelValue => {
+                return Some(&PropertyData {
+                    get_data_size: |_, _| s(size_of::<Float32>().try_into().unwrap()),
+                    write_data: Qualifier::Unneeded(|id, _, _, _, _, ptr| unsafe {
+                        let ctrl_idx = usize::try_from(control_channel_index(id)).unwrap();
+                        write_once_get_size(ptr, volume_control_db_val(ctrl_idx).unwrap())
+                    }),
+                    read_data: Some(Qualifier::Unneeded(|id, addr, _, _, _, data_ptr| {
+                        let ctrl_elem = control_channel_index(id);
+                        let ctrl_idx: usize = ctrl_elem.try_into().unwrap();
+
+                        let data_ptr = data_ptr.cast::<Float32>();
+                        let new_db_val = unsafe { data_ptr.read() };
+
+                        let new_gain = db_to_gain(new_db_val);
+
+                        OUTPUT_VOLUME
+                            .get(ctrl_idx)
+                            .unwrap()
+                            .store(new_gain, Ordering::Relaxed);
+
+                        if let Some(host) = unsafe { HOST } {
+                            if let Some(properties_changed_callback) = host.PropertiesChanged {
+                                // Note that if this value changes, it is implied
+                                // that the scalar value changed as well
+                                let changed_prop_addrs = [
+                                    *addr,
+                                    AudioObjectPropertyAddress {
+                                        mSelector: kAudioLevelControlPropertyScalarValue,
+                                        ..*addr
+                                    },
+                                ];
+
+                                unsafe {
+                                    properties_changed_callback(
+                                        host,
+                                        id,
+                                        changed_prop_addrs.len().try_into().unwrap(),
+                                        changed_prop_addrs.as_ptr(),
+                                    )
+                                };
+                            }
+                        }
+                    })),
+                });
+            }
+
+            kAudioLevelControlPropertyDecibelRange => {
+                return Some(&PropertyData {
+                    get_data_size: |_, _| s(size_of::<AudioValueRange>().try_into().unwrap()),
+                    write_data: Qualifier::Unneeded(|_, _, _, _, _, ptr| {
+                        const RANGE: AudioValueRange = AudioValueRange {
+                            mMaximum: VOL_MAX_DB as Float64,
+                            mMinimum: VOL_MIN_DB as Float64,
+                        };
+                        unsafe { write_once_get_size(ptr, RANGE) }
+                    }),
+                    read_data: None,
+                });
+            }
+
+            kAudioLevelControlPropertyConvertScalarToDecibels => {
+                return Some(&PropertyData {
+                    get_data_size: |_, _| s(size_of::<Float32>().try_into().unwrap()),
+                    write_data: Qualifier::Unneeded(|_, _, _, _, _, ptr| {
+                        let val_ptr = ptr.cast::<Float32>();
+                        let norm_val = unsafe { val_ptr.read() };
+                        unsafe { write_once_get_size(ptr, norm_to_db(norm_val)) }
+                    }),
+                    read_data: None,
+                });
+            }
+
+            kAudioLevelControlPropertyConvertDecibelsToScalar => {
+                return Some(&PropertyData {
+                    get_data_size: |_, _| s(size_of::<Float32>().try_into().unwrap()),
+                    write_data: Qualifier::Unneeded(|_, _, _, _, _, ptr| {
+                        let val_ptr = ptr.cast::<Float32>();
+                        let db_val = unsafe { val_ptr.read() };
+                        unsafe { write_once_get_size(ptr, db_to_norm(db_val)) }
+                    }),
+                    read_data: None,
+                });
+            }
+
+            _ => (),
+        }
+    } else {
+        match selector {
+            kAudioObjectPropertyBaseClass => {
+                return Some(&PropertyData {
+                    get_data_size: |_, _| s(CLASS_ID_SIZE),
+                    write_data: Qualifier::Unneeded(|_, _, _, _, _, ptr| unsafe {
+                        write_once_get_size(ptr, kAudioBooleanControlClassID)
+                    }),
+                    read_data: None,
+                });
+            }
+
+            kAudioObjectPropertyClass => {
+                return Some(&PropertyData {
+                    get_data_size: |_, _| s(CLASS_ID_SIZE),
+                    write_data: Qualifier::Unneeded(|_, _, _, _, _, ptr| unsafe {
+                        write_once_get_size(ptr, kAudioMuteControlClassID)
+                    }),
+                    read_data: None,
+                });
+            }
+
+            kAudioBooleanControlPropertyValue => {
+                return Some(&PropertyData {
+                    get_data_size: |_, _| s(size_of::<UInt32>().try_into().unwrap()),
+                    write_data: Qualifier::Unneeded(|id, _, _, _, _, ptr| {
+                        let ctrl_index: usize = usize::try_from(control_channel_index(id)).unwrap();
+                        let mute_control = OUTPUT_MUTE.get(ctrl_index).unwrap();
+                        let output = UInt32::from(mute_control.load(Ordering::Relaxed));
+                        unsafe { write_once_get_size(ptr, output) }
+                    }),
+                    read_data: Some(Qualifier::Unneeded(|id, addr, _, _, _, data_ptr| {
+                        let ctrl_elem = control_channel_index(id);
+                        let ctrl_idx: usize = ctrl_elem.try_into().unwrap();
+
+                        let data_ptr = data_ptr.cast::<UInt32>();
+                        let new_val = unsafe { data_ptr.read() };
+
+                        OUTPUT_MUTE
+                            .get(ctrl_idx)
+                            .unwrap()
+                            .store(new_val != 0, Ordering::Relaxed);
+
+                        if let Some(host) = unsafe { HOST } {
+                            if let Some(properties_changed_callback) = host.PropertiesChanged {
+                                unsafe { properties_changed_callback(host, id, 1, addr) };
+                            }
+                        }
+                    })),
+                });
+            }
+
+            _ => (),
+        }
+    }
+
+    None
+}
 
 // #pragma mark IO Operations
 
-// static OSStatus	syfala_StartIO(
+// static OSStatus	StartIO(
 // 	AudioServerPlugInDriverRef const inDriver,
 // 	AudioObjectID const inDeviceObjectID,
 // 	UInt32 const inClientID
@@ -2398,8 +2112,8 @@ fn find_stream_property_data(
 // 	#pragma unused(inClientID)
 
 // 	// check args
-// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_StartIO: bad driver reference");
-// 	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "syfala_StartIO: bad device ID");
+// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "StartIO: bad driver reference");
+// 	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "StartIO: bad device ID");
 
 // 	//	we need to hold the state lock
 // 	pthread_mutex_lock(&gDevice_IOMutex);
@@ -2425,7 +2139,7 @@ fn find_stream_property_data(
 // 	return kAudioHardwareNoError;
 // }
 
-// static OSStatus	syfala_StopIO(
+// static OSStatus	StopIO(
 // 	AudioServerPlugInDriverRef const inDriver,
 // 	AudioObjectID const inDeviceObjectID,
 // 	UInt32 const inClientID
@@ -2438,8 +2152,8 @@ fn find_stream_property_data(
 // 	#pragma unused(inClientID)
 
 // 	// check args
-// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_StopIO: bad driver reference");
-// 	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "syfala_StopIO: bad device ID");
+// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "StopIO: bad driver reference");
+// 	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "StopIO: bad device ID");
 
 // 	//	we need to hold the state lock
 // 	pthread_mutex_lock(&gDevice_IOMutex);
@@ -2462,7 +2176,7 @@ fn find_stream_property_data(
 // 	return kAudioHardwareNoError;
 // }
 
-// static OSStatus	syfala_GetZeroTimeStamp(
+// static OSStatus	GetZeroTimeStamp(
 // 	AudioServerPlugInDriverRef const inDriver,
 // 	AudioObjectID const inDeviceObjectID,
 // 	UInt32 const inClientID,
@@ -2484,8 +2198,8 @@ fn find_stream_property_data(
 // 	#pragma unused(inClientID)
 
 // 	// check args
-// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_GetZeroTimeStamp: bad driver reference");
-// 	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "syfala_GetZeroTimeStamp: bad device ID");
+// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "GetZeroTimeStamp: bad driver reference");
+// 	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "GetZeroTimeStamp: bad device ID");
 
 // 	//	we need to hold the locks
 // 	pthread_mutex_lock(&gDevice_IOMutex);
@@ -2512,7 +2226,7 @@ fn find_stream_property_data(
 // 	return kAudioHardwareNoError;
 // }
 
-// static OSStatus	syfala_WillDoIOOperation(
+// static OSStatus	WillDoIOOperation(
 // 	AudioServerPlugInDriverRef const inDriver,
 // 	AudioObjectID const inDeviceObjectID,
 // 	UInt32 const inClientID,
@@ -2528,8 +2242,8 @@ fn find_stream_property_data(
 // 	#pragma unused(inClientID)
 
 // 	// check args
-// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_WillDoIOOperation: bad driver reference");
-// 	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "syfala_WillDoIOOperation: bad device ID");
+// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "WillDoIOOperation: bad driver reference");
+// 	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "WillDoIOOperation: bad device ID");
 
 // 	//	figure out if we support the operation
 // 	bool willDo = false;
@@ -2546,7 +2260,7 @@ fn find_stream_property_data(
 // 	return kAudioHardwareNoError;
 // }
 
-// static OSStatus	syfala_BeginIOOperation(
+// static OSStatus	BeginIOOperation(
 // 	AudioServerPlugInDriverRef const inDriver,
 // 	AudioObjectID const inDeviceObjectID,
 // 	UInt32 const inClientID,
@@ -2562,13 +2276,13 @@ fn find_stream_property_data(
 // 	#pragma unused(inClientID, inOperationID, inIOBufferFrameSize, inIOCycleInfo)
 
 // 	// check args
-// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_BeginIOOperation: bad driver reference");
-// 	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "syfala_BeginIOOperation: bad device ID");
+// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "BeginIOOperation: bad driver reference");
+// 	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "BeginIOOperation: bad device ID");
 
 // 	return kAudioHardwareNoError;
 // }
 
-// static OSStatus	syfala_DoIOOperation(
+// static OSStatus	DoIOOperation(
 // 	AudioServerPlugInDriverRef const inDriver,
 // 	AudioObjectID const inDeviceObjectID,
 // 	AudioObjectID const inStreamObjectID,
@@ -2587,16 +2301,16 @@ fn find_stream_property_data(
 // 	#pragma unused(inClientID, inIOCycleInfo, ioSecondaryBuffer)
 
 // 	// check args
-// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_DoIOOperation: bad driver reference");
-// 	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "syfala_DoIOOperation: bad device ID");
-// 	DoIfFailed(inStreamObjectID != STREAM_ID, return kAudioHardwareBadObjectError, "syfala_DoIOOperation: bad stream ID");
+// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "DoIOOperation: bad driver reference");
+// 	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "DoIOOperation: bad device ID");
+// 	DoIfFailed(inStreamObjectID != STREAM_ID, return kAudioHardwareBadObjectError, "DoIOOperation: bad stream ID");
 
 // 	if(inOperationID == kAudioServerPlugInIOOperationWriteMix) {}
 
 // 	return kAudioHardwareNoError;
 // }
 
-// static OSStatus	syfala_EndIOOperation(
+// static OSStatus	EndIOOperation(
 // 	AudioServerPlugInDriverRef const inDriver,
 // 	AudioObjectID const inDeviceObjectID,
 // 	UInt32 const inClientID,
@@ -2611,8 +2325,8 @@ fn find_stream_property_data(
 // 	#pragma unused(inClientID, inOperationID, inIOBufferFrameSize, inIOCycleInfo)
 
 // 	// check args
-// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "syfala_EndIOOperation: bad driver reference");
-// 	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "syfala_EndIOOperation: bad device ID");
+// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "EndIOOperation: bad driver reference");
+// 	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "EndIOOperation: bad device ID");
 
 // 	return kAudioHardwareNoError;
 // }
