@@ -1,10 +1,7 @@
 use core::{
-    iter, mem,
-    ops::RangeInclusive,
-    ptr::{self, NonNull},
-    sync::atomic::{AtomicBool, AtomicU32, Ordering},
+    iter, mem, num, ops::RangeInclusive, ptr::{self, NonNull}, sync::atomic::{AtomicBool, AtomicU32, Ordering}
 };
-use std::{panic, sync::Mutex};
+use std::{panic, sync::{LazyLock, Mutex}};
 
 use atomic_float::AtomicF32;
 use coreaudio_sys::*;
@@ -306,7 +303,7 @@ pub struct AudioServerPlugInDriverInterface {
             *mut UInt64,
         ) -> OSStatus,
     >,
-    pub will_do_iooperation: Option<
+    pub will_do_io_operation: Option<
         unsafe extern "C" fn(
             AudioServerPlugInDriverRef,
             AudioObjectID,
@@ -316,7 +313,7 @@ pub struct AudioServerPlugInDriverInterface {
             *mut Boolean,
         ) -> OSStatus,
     >,
-    pub begin_iooperation: Option<
+    pub begin_io_operation: Option<
         unsafe extern "C" fn(
             AudioServerPlugInDriverRef,
             AudioObjectID,
@@ -326,7 +323,7 @@ pub struct AudioServerPlugInDriverInterface {
             *const AudioServerPlugInIOCycleInfo,
         ) -> OSStatus,
     >,
-    pub do_iooperation: Option<
+    pub do_io_operation: Option<
         unsafe extern "C" fn(
             AudioServerPlugInDriverRef,
             AudioObjectID,
@@ -338,8 +335,8 @@ pub struct AudioServerPlugInDriverInterface {
             *mut std::os::raw::c_void,
             *mut std::os::raw::c_void,
         ) -> OSStatus,
-    >,
-    pub end_iooperation: Option<
+    >,  
+    pub end_io_operation: Option<
         unsafe extern "C" fn(
             AudioServerPlugInDriverRef,
             AudioObjectID,
@@ -369,15 +366,15 @@ static DRIVER_INTERFACE: AudioServerPlugInDriverInterface = AudioServerPlugInDri
     has_property: Some(has_property),
     is_property_settable: Some(is_property_settable),
     get_property_data_size: Some(get_property_data_size),
-    get_property_data: Some(GetPropertyData),
-    set_property_data: Some(SetPropertyData),
-    start_io: Some(StartIO),
-    stop_io: Some(StopIO),
-    get_zero_time_stamp: Some(GetZeroTimeStamp),
-    will_do_iooperation: Some(WillDoIOOperation),
-    begin_iooperation: Some(BeginIOOperation),
-    do_iooperation: Some(DoIOOperation),
-    end_iooperation: Some(EndIOOperation),
+    get_property_data: Some(get_property_data),
+    set_property_data: None,
+    start_io: Some(start_io),
+    stop_io: Some(stop_io),
+    get_zero_time_stamp: Some(get_zero_timestamp),
+    will_do_io_operation: Some(will_do_io_operation),
+    begin_io_operation: Some(begin_io_operation),
+    do_io_operation: Some(do_io_operation),
+    end_io_operation: Some(end_io_operation),
 };
 
 static DRIVER_OBJECT: &AudioServerPlugInDriverInterface = &DRIVER_INTERFACE;
@@ -391,31 +388,34 @@ const DEVICE_UID: &str = "UID";
 
 const DEVICE_MODEL_UID: &str = "ModelUID";
 
-const DEVICE_RING_BUF_SIZE: UInt32 = 16384;
+// How often should CoreAudio query timestamps (and, if necessary, apply drift correction)?
+const TIMESTAMP_PERIOD_NANOSECS: u64 = 500_000_000;
+const FRAMES_PER_TIMESTAMP: u32 = (TIMESTAMP_PERIOD_NANOSECS as f64 * SAMPLE_RATE / 1e9 + 0.5) as u32;
 
 struct IOInfo {
-    is_running: UInt32,
-    host_ticks_per_frame: Float64,
-    n_timestamps: UInt64,
-    anchor_sample_time: Float64,
-    anchor_host_time: UInt64,
+    n_active_clients: Option<num::NonZeroU32>,
+    current_frame_timestamp: UInt64,
+    current_host_timestamp: UInt64,
 }
 
 static DEVICE_IO: Mutex<IOInfo> = Mutex::new(IOInfo {
-    is_running: 0,
-    host_ticks_per_frame: 0.,
-    n_timestamps: 0,
-    anchor_sample_time: 0.,
-    anchor_host_time: 0,
+    n_active_clients: None,
+    current_frame_timestamp: 0,
+    current_host_timestamp: 0,
 });
 
 const VOL_MIN_DB: Float32 = -80.;
 const VOL_MAX_DB: Float32 = 0.;
 const VOL_DB_RANGE: Float32 = VOL_MAX_DB - VOL_MIN_DB;
 
-static OUTPUT_VOLUME: [AtomicF32; N_CHANNELS.strict_add(1) as usize] =
-    [const { AtomicF32::new(1.) }; _];
-static OUTPUT_MUTE: [AtomicBool; N_CHANNELS.strict_add(1) as usize] =
+static OUTPUT_VOLUME: [AtomicF32; N_CHANNELS.strict_add(1) as usize] = {
+    let mut out = [const { AtomicF32::new(1.) }; _];
+    // mute the master initially for safety
+    out[0] = AtomicF32::new(0.);
+    out
+};
+    
+static OUTPUT_MUTE: [AtomicBool; N_CHANNELS.strict_add(1) as usize] = 
     [const { AtomicBool::new(false) }; _];
 
 // These IDs are defined as macros in the coreaudio headers, bindgen can't generate them so we do
@@ -522,6 +522,42 @@ const fn raw_driver_ptr() -> *mut std::os::raw::c_void {
         .cast()
 }
 
+// ----
+// coreaudio_sys doesn't define these, so we do it ourselves
+
+#[repr(C)]
+#[allow(non_camel_case_types)]
+pub struct mach_timebase_info_data_t {
+    pub numer: u32,
+    pub denom: u32,
+}
+
+unsafe extern "C" {
+    pub safe fn mach_timebase_info(info: *mut mach_timebase_info_data_t) -> i32;
+}
+
+unsafe extern "C" {
+    pub safe fn mach_absolute_time() -> UInt64;
+}
+
+// ----
+
+#[inline(always)]
+fn get_timebase_info() -> mach_timebase_info_data_t {
+    let mut info = mach_timebase_info_data_t { numer: 0, denom: 0 };
+    mach_timebase_info(&mut info);
+    info
+}
+
+// This is practically a system-wide constant. It sucks that we can't just use a static
+#[inline(always)]
+fn get_ticks_per_timestamp() -> num::NonZeroU64 {
+    let mach_timebase_info_data_t { numer, denom } = get_timebase_info();
+    num::NonZeroU64::new(TIMESTAMP_PERIOD_NANOSECS.strict_mul(UInt64::from(numer)).strict_div(u64::from(denom))).unwrap()
+}
+
+static TICKS_PER_TIMESTAMP: LazyLock<num::NonZeroU64> = LazyLock::new(get_ticks_per_timestamp);
+
 // This is the only function exported as a symbol by the library, It's name must be indicated in
 // the CFPlugInFactories field the bundle's Info.plist file.
 #[unsafe(no_mangle)]
@@ -538,7 +574,8 @@ unsafe extern "C" fn create(
     //	The majority of the driver's initilization should be handled in the Initialize() method of
     //	the driver's AudioServerPlugInDriverInterface.
 
-    log::set_boxed_logger(Box::new(OsLogger::new("com.emeraude.syfala_coreaudio")));
+    // Well.. there's nothing really we can do when we fail setting up logging
+    let _ = log::set_boxed_logger(Box::new(OsLogger::new("com.emeraude.syfala_coreaudio")));
 
     OUTPUT_VOLUME[0].store(0.001, Ordering::Relaxed);
 
@@ -569,7 +606,7 @@ const fn cfuuid_as_bytes(uuid: &CFUUIDBytes) -> &[u8; 16] {
 
 // another macro we have to redefine
 // E_NOINTERFACE
-const E_NOINTERFACE: HRESULT = 0x80000004;
+const E_NOINTERFACE: HRESULT = 0x80000004u32 as i32;
 
 unsafe extern "C" fn query_interface(
     driver: *mut std::os::raw::c_void,
@@ -670,29 +707,6 @@ unsafe extern "C" fn initialize(
     // SAFETY: the HAL guarantees this isn't called concurrently, and that `host` outlives
     // our whole plugin ('static lifetime)
     unsafe { HOST = host.as_ref() };
-
-    // ----
-    // coreaudio_sys doesn't define these, so we do it ourselves
-
-    #[repr(C)]
-    #[allow(non_camel_case_types)]
-    pub struct mach_timebase_info_data_t {
-        pub numer: u32,
-        pub denom: u32,
-    }
-
-    unsafe extern "C" {
-        pub safe fn mach_timebase_info(info: *mut mach_timebase_info_data_t) -> i32;
-    }
-
-    // ----
-
-    //	calculate the host ticks per frame
-    let mut the_timebase_info = mach_timebase_info_data_t { numer: 0, denom: 0 };
-    mach_timebase_info(ptr::from_mut(&mut the_timebase_info));
-    let host_clock_freq =
-        Float64::from(the_timebase_info.denom) / Float64::from(the_timebase_info.numer);
-    DEVICE_IO.lock().unwrap().host_ticks_per_frame = host_clock_freq * (1000000000. / SAMPLE_RATE);
 
     return kAudioHardwareNoError as OSStatus;
 }
@@ -854,7 +868,7 @@ unsafe extern "C" fn abort_device_configuration_change(
 
 unsafe extern "C" fn has_property(
     driver: AudioServerPlugInDriverRef,
-    id: AudioObjectID,
+    object_id: AudioObjectID,
     _client_pid: pid_t,
     addr: *const AudioObjectPropertyAddress,
 ) -> Boolean {
@@ -870,7 +884,7 @@ unsafe extern "C" fn has_property(
     };
 
     let Ok(res) =
-        panic::catch_unwind(|| find_property_data(id, unsafe { addr.as_ref() }).is_some())
+        panic::catch_unwind(|| find_property_data(object_id, unsafe { addr.as_ref() }).is_ok())
     else {
         log::error!("has_property: internal function panicked!!!");
         return Boolean::from(false);
@@ -881,7 +895,7 @@ unsafe extern "C" fn has_property(
 
 unsafe extern "C" fn is_property_settable(
     driver: AudioServerPlugInDriverRef,
-    id: AudioObjectID,
+    object_id: AudioObjectID,
     _client_pid: pid_t,
     addr: *const AudioObjectPropertyAddress,
     is_settable: *mut Boolean,
@@ -904,15 +918,20 @@ unsafe extern "C" fn is_property_settable(
 
     let addr = unsafe { addr.as_ref() };
 
-    let Ok(res) = panic::catch_unwind(|| {
-        find_property_data(id, addr).map(|data| data.read_data.is_some())
-    }) else {
+    let Ok(res) =
+        panic::catch_unwind(|| find_property_data(object_id, addr).map(|data| data.read_data.is_some()))
+    else {
         log::error!("has_property: internal function panicked!!!");
         return kAudioHardwareUnspecifiedError as OSStatus;
     };
 
-    let Some(output) = res.map(Boolean::from) else {
-        return kAudioHardwareUnknownPropertyError as OSStatus;
+    let output = match res {
+        Ok(b) => Boolean::from(b),
+        Err(b) => return if b {
+            kAudioHardwareUnknownPropertyError
+        } else {
+            kAudioHardwareBadObjectError
+        } as OSStatus,
     };
 
     unsafe { is_settable.write(output) }
@@ -921,15 +940,14 @@ unsafe extern "C" fn is_property_settable(
 }
 
 unsafe extern "C" fn get_property_data_size(
-	driver: AudioServerPlugInDriverRef,
-	id: AudioObjectID,
-	_client_pid: pid_t,
-	addr: *const AudioObjectPropertyAddress,
-	qual_size: UInt32,
-	qual_data: *const std::os::raw::c_void,
-	data_size: *mut UInt32,
+    driver: AudioServerPlugInDriverRef,
+    object_id: AudioObjectID,
+    _client_pid: pid_t,
+    addr: *const AudioObjectPropertyAddress,
+    _qual_size: UInt32,
+    _qual_data: *const std::os::raw::c_void,
+    data_size: *mut UInt32,
 ) -> OSStatus {
-
     // This method returns the byte size of the property's data.
 
     // check args
@@ -951,14 +969,19 @@ unsafe extern "C" fn get_property_data_size(
     let addr = unsafe { addr.as_ref() };
 
     let Ok(res) = panic::catch_unwind(|| {
-        find_property_data(id, addr).map(|data| (data.get_data_size)(id, addr).into_inner().1)
+        find_property_data(object_id, addr).map(|data| (data.get_data_size)(object_id, addr).into_inner().1)
     }) else {
         log::error!("has_property: internal function panicked!!!");
         return kAudioHardwareUnspecifiedError as OSStatus;
     };
-	
-    let Some(output) = res else {
-        return kAudioHardwareUnknownPropertyError as OSStatus;
+
+    let output = match res {
+        Ok(size) => size,
+        Err(b) => return if b {
+            kAudioHardwareUnknownPropertyError
+        } else {
+            kAudioHardwareBadObjectError
+        } as OSStatus,
     };
 
     unsafe { data_size.write(output) }
@@ -966,57 +989,167 @@ unsafe extern "C" fn get_property_data_size(
     kAudioHardwareNoError as OSStatus
 }
 
-unsafe extern "C" fn GetPropertyData(
-	driver: AudioServerPlugInDriverRef,
-	id: AudioObjectID,
-	_client_pid: pid_t,
-	addr: *const AudioObjectPropertyAddress,
-	qual_size: UInt32,
-	qual_data: *const std::os::raw::c_void,
-	available_data_size: UInt32,
-	written_data_size: *mut UInt32,
-	out_data: *mut std::os::raw::c_void,
-) -> {
-	char const selector[5] = FourCCToCString(inAddress->mSelector);
-    char const scope[5] = FourCCToCString(inAddress->mScope);
+unsafe extern "C" fn get_property_data(
+    driver: AudioServerPlugInDriverRef,
+    object_id: AudioObjectID,
+    _client_pid: pid_t,
+    addr: *const AudioObjectPropertyAddress,
+    qual_size: UInt32,
+    qual_data: *const std::os::raw::c_void,
+    available_data_size: UInt32,
+    written_data_size: *mut UInt32,
+    out_data: *mut std::os::raw::c_void,
+) -> OSStatus {
+    // This method returns the byte size of the property's data.
 
-    DebugMsg(
-		"GetData   : %02u { %s %s %02d } by %08x",
-		inObjectID,
-		selector,
-		scope,
-		inAddress->mElement,
-		inClientProcessID
-	);
+    // check args
+    if !eq_driver_ptr(driver.cast()) {
+        log::error!("get_property_data: bad driver reference");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-	//	check args
-	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "GetPropertyData: bad driver reference");
-	DoIfFailed(inAddress == NULL, return kAudioHardwareIllegalOperationError, "GetPropertyData: no address");
-	DoIfFailed(outDataSize == NULL, return kAudioHardwareIllegalOperationError, "GetPropertyData: no place to put the return value size");
-	DoIfFailed(outData == NULL, return kAudioHardwareIllegalOperationError, "GetPropertyData: no place to put the return value");
+    let Some(addr) = NonNull::new(addr.cast_mut()) else {
+        log::error!("get_property_data: no address");
+        return kAudioHardwareIllegalOperationError as OSStatus;
+    };
 
-	switch(inObjectID)
-	{
-		case PLUGIN_ID:
-			return GetPlugInPropertyData(
-				inAddress,
-				inQualifierDataSize,
-				inQualifierData,
-				inDataSize,
-				outDataSize,
-				outData
-			);
+    let Some(written_data_size) = NonNull::new(written_data_size) else {
+        log::error!("get_property_data: no place to put the return value size");
+        return kAudioHardwareIllegalOperationError as OSStatus;
+    };
 
-		case DEVICE_ID:
-			return GetDevicePropertyData(inAddress, inDataSize, outDataSize, outData);
+    let Some(out_data) = NonNull::new(out_data) else {
+        log::error!("get_property_data: no place to put the return value");
+        return kAudioHardwareIllegalOperationError as OSStatus;
+    };
 
-		case STREAM_ID:
-			return GetStreamPropertyData(inAddress, inDataSize, outDataSize, outData);
-	};
+    let addr = unsafe { addr.as_ref() };
 
-	return (audio_object_is_control(inObjectID)) ?
-		GetControlPropertyData(inObjectID, inAddress, inDataSize, outDataSize, outData) :
-		kAudioHardwareBadObjectError;
+    let data = match find_property_data(object_id, addr) {
+        Ok(data) => data,
+        Err(b) => return if b {
+            kAudioHardwareUnknownPropertyError
+        } else {
+            kAudioHardwareBadObjectError
+        } as OSStatus,
+    };
+
+    if available_data_size < *(data.get_data_size)(object_id, addr).start() {
+        return kAudioHardwareBadPropertySizeError as OSStatus;
+    };
+
+    let size = match data.write_data {
+        Qualifier::Needed((get_qual_size, write_data)) => {
+            let Some(qual_data) = NonNull::new(qual_data.cast_mut()) else {
+                return kAudioHardwareIllegalOperationError as OSStatus;
+            };
+
+            if qual_size < *get_qual_size(object_id, addr).start() {
+                return kAudioHardwareBadPropertySizeError as OSStatus;
+            }
+
+            unsafe {
+                write_data(
+                    object_id,
+                    addr,
+                    qual_size,
+                    qual_data,
+                    available_data_size,
+                    out_data,
+                )
+            }
+        }
+        Qualifier::Unneeded(f) => unsafe {
+            f(
+                object_id,
+                addr,
+                qual_size,
+                qual_data,
+                available_data_size,
+                out_data,
+            )
+        },
+    };
+
+    unsafe { written_data_size.write(size) }
+
+    return kAudioHardwareNoError as OSStatus;
+}
+
+
+unsafe extern "C" fn set_property_data(
+    driver: AudioServerPlugInDriverRef,
+    object_id: AudioObjectID,
+    _client_pid: pid_t,
+    addr: *const AudioObjectPropertyAddress,
+    qual_size: UInt32,
+    qual_data: *const std::os::raw::c_void,
+    available_data_size: UInt32,
+    out_data: *const std::os::raw::c_void,
+) -> OSStatus {
+    // This method returns the byte size of the property's data.
+
+    // check args
+    if !eq_driver_ptr(driver.cast()) {
+        log::error!("set_property_data: bad driver reference");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
+
+    let Some(addr) = NonNull::new(addr.cast_mut()) else {
+        log::error!("set_property_data: no address");
+        return kAudioHardwareIllegalOperationError as OSStatus;
+    };
+
+    let addr = unsafe { addr.as_ref() };
+
+    let data = match find_property_data(object_id, addr) {
+        Ok(data) => data,
+        Err(b) => return if b {
+            kAudioHardwareUnknownPropertyError
+        } else {
+            kAudioHardwareBadObjectError
+        } as OSStatus,
+    };
+
+    let Some(out_data) = NonNull::new(out_data.cast_mut()) else {
+        log::error!("set_property_data: no place to put the return value");
+        return kAudioHardwareIllegalOperationError as OSStatus;
+    };
+
+    if available_data_size < *(data.get_data_size)(object_id, addr).start() {
+        return kAudioHardwareBadPropertySizeError as OSStatus;
+    };    
+
+    let Some(read_data) = &data.read_data else {
+        return kAudioHardwareUnknownPropertyError as OSStatus; 
+    };
+
+    let size = read_data {
+        Qualifier::Needed(f) => {
+            f(
+                object_id,
+                addr,
+                qual_size,
+                qual_data,
+                available_data_size,
+                out_data,
+            )
+        }
+        Qualifier::Unneeded(f) => unsafe {
+            f(
+                object_id,
+                addr,
+                qual_size,
+                qual_data,
+                available_data_size,
+                out_data,
+            )
+        },
+    };
+
+    unsafe { written_data_size.write(size) }
+
+    return kAudioHardwareNoError as OSStatus;
 }
 
 // static OSStatus	SetPropertyData(
@@ -1106,7 +1239,7 @@ enum Qualifier<T, U> {
 }
 
 // TODO: change this lol
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Hash)]
 struct PropertyData {
     get_data_size: fn(id: AudioObjectID, &AudioObjectPropertyAddress) -> RangeInclusive<UInt32>,
     write_data: Qualifier<
@@ -1182,99 +1315,27 @@ unsafe fn write_once_get_size<T>(ptr: NonNull<std::os::raw::c_void>, value: T) -
     unsafe { write_get_size(ptr, size_of::<T>(), iter::once(value)) }
 }
 
+// Ok(...) no error
+// Ok(false) = kAudioHardwareBadObjectError
+// OK(true) = kAudioHardwareUnknownPropertyError
 fn find_property_data(
     id: AudioObjectID,
     address: &AudioObjectPropertyAddress,
-) -> Option<&'static PropertyData> {
+) -> Result<&'static PropertyData, bool> {
     match id {
-        PLUGIN_ID => find_plugin_property_data(address),
-        DEVICE_ID => find_device_property_data(address),
-        STREAM_ID => find_stream_property_data(address),
-        ctrl if audio_object_is_control(ctrl) => None,
-        _ => None,
+        PLUGIN_ID => find_plugin_property_data(address).ok_or(true),
+        DEVICE_ID => find_device_property_data(address).ok_or(true),
+        STREAM_ID => find_stream_property_data(address).ok_or(true),
+        ctrl if audio_object_is_control(ctrl) => find_control_property_data(
+            control_is_volume(ctrl),
+            control_channel_index(id).try_into().unwrap(),
+            address,
+        ).ok_or(true),
+        _ => Err(false),
     }
 }
 
-// Not the cleanest, i know,
-/// None: kAudioHardwareUnknownPropertyError
-/// Some(Err(true)): kAudioHardwareBadPropertySizeError,
-/// Some(Err(false)): kAudioHardwareIllegalOperationError
-/// Some(Ok(n)): kAudioHardwareNoError,
-#[inline(always)]
-unsafe fn get_property_data(
-    id: AudioObjectID,
-    address: &AudioObjectPropertyAddress,
-    qual_size: UInt32,
-    qual_data: *const std::os::raw::c_void,
-    data_size: UInt32,
-    out_data: NonNull<std::os::raw::c_void>,
-) -> Option<Result<UInt32, bool>> {
-    let Some(data) = find_property_data(id, address) else {
-        return None;
-    };
-
-    if data_size < *(data.get_data_size)(id, address).start() {
-        return Some(Err(true));
-    };
-
-    Some(match data.write_data {
-        Qualifier::Needed((get_qual_size, write_data)) => {
-            if let Some(qual_data) = NonNull::new(qual_data.cast_mut()) {
-                if qual_size < *get_qual_size(id, address).start() {
-                    Ok(unsafe {
-                        write_data(id, address, qual_size, qual_data, data_size, out_data)
-                    })
-                } else {
-                    Err(true)
-                }
-            } else {
-                Err(false)
-            }
-        }
-        Qualifier::Unneeded(f) => {
-            Ok(unsafe { f(id, address, qual_size, qual_data, data_size, out_data) })
-        }
-    })
-}
-
-// Not the cleanest, i know,
-/// None: kAudioHardwareUnknownPropertyError
-/// Some(Err(true)): kAudioHardwareBadPropertySizeError,
-/// Some(Err(false)): kAudioHardwareIllegalOperationError
-/// Some(Ok(n)): kAudioHardwareNoError,
-#[inline(always)]
-unsafe fn set_property_data(
-    id: AudioObjectID,
-    address: &AudioObjectPropertyAddress,
-    qual_size: UInt32,
-    qual_data: *const std::os::raw::c_void,
-    data_size: UInt32,
-    out_data: NonNull<std::os::raw::c_void>,
-) -> Option<Result<(), bool>> {
-    let Some(data) = find_property_data(id, address) else {
-        return None;
-    };
-
-    if data_size < *(data.get_data_size)(id, address).start() {
-        return Some(Err(true));
-    };
-
-    if let Some(read_data) = &data.read_data {
-        Some(match read_data {
-            Qualifier::Needed(f) => NonNull::new(qual_data.cast_mut())
-                .map(|qual_data| unsafe {
-                    f(id, address, qual_size, qual_data, data_size, out_data)
-                })
-                .ok_or(false),
-            Qualifier::Unneeded(f) => {
-                Ok(unsafe { f(id, address, qual_size, qual_data, data_size, out_data) })
-            }
-        })
-    } else {
-        Some(Err(false))
-    }
-}
-
+#[allow(non_upper_case_globals)]
 fn find_plugin_property_data(
     address: &AudioObjectPropertyAddress,
 ) -> Option<&'static PropertyData> {
@@ -1352,6 +1413,7 @@ fn find_plugin_property_data(
     }
 }
 
+#[allow(non_upper_case_globals)]
 fn find_device_property_data(
     address: &AudioObjectPropertyAddress,
 ) -> Option<&'static PropertyData> {
@@ -1602,7 +1664,7 @@ fn find_device_property_data(
         kAudioDevicePropertyDeviceIsRunning => Some(&PropertyData {
             get_data_size: |_, _| s(size_of::<UInt32>().try_into().unwrap()),
             write_data: Qualifier::Unneeded(|_, _, _, _, _, ptr| unsafe {
-                write_once_get_size(ptr, DEVICE_IO.lock().unwrap().is_running)
+                write_once_get_size(ptr, DEVICE_IO.lock().unwrap().n_active_clients)
             }),
             read_data: None,
         }),
@@ -1646,7 +1708,7 @@ fn find_device_property_data(
         kAudioDevicePropertyZeroTimeStampPeriod => Some(&PropertyData {
             get_data_size: |_, _| s(size_of::<UInt32>().try_into().unwrap()),
             write_data: Qualifier::Unneeded(|_, _, _, _, _, ptr| unsafe {
-                write_once_get_size(ptr, DEVICE_RING_BUF_SIZE)
+                write_once_get_size(ptr, FRAMES_PER_TIMESTAMP)
             }),
             read_data: None,
         }),
@@ -1697,6 +1759,7 @@ fn find_device_property_data(
     }
 }
 
+#[allow(non_upper_case_globals)]
 fn find_stream_property_data(
     address: &AudioObjectPropertyAddress,
 ) -> Option<&'static PropertyData> {
@@ -1823,6 +1886,7 @@ fn find_stream_property_data(
     }
 }
 
+#[allow(non_upper_case_globals)]
 fn find_control_property_data(
     is_volume: bool,
     _ctrl_index: usize,
@@ -2094,239 +2158,264 @@ fn find_control_property_data(
     None
 }
 
-// #pragma mark IO Operations
+unsafe extern "C" fn start_io(
+	driver: AudioServerPlugInDriverRef,
+	device_id: AudioObjectID,
+	_client_id: UInt32,
+) -> OSStatus {
+	log::debug!("StartIO");
 
-// static OSStatus	StartIO(
-// 	AudioServerPlugInDriverRef const inDriver,
-// 	AudioObjectID const inDeviceObjectID,
-// 	UInt32 const inClientID
-// ) {
-// 	DebugMsg("StartIO");
+	//	This call tells the device that IO is starting for the given client. When this routine
+	//	returns, the device's clock is running and it is ready to have data read/written. It is
+	//	important to note that multiple clients can have IO running on the device at the same time.
+	//	So, work only needs to be done when the first client starts. All subsequent starts simply
+	//	increment the counter
 
-// 	//	This call tells the device that IO is starting for the given client. When this routine
-// 	//	returns, the device's clock is running and it is ready to have data read/written. It is
-// 	//	important to note that multiple clients can have IO running on the device at the same time.
-// 	//	So, work only needs to be done when the first client starts. All subsequent starts simply
-// 	//	increment the counter.
+    // check args
+    if !eq_driver_ptr(driver.cast()) {
+        log::error!("start_io: bad driver reference");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-// 	#pragma unused(inClientID)
+    if device_id != DEVICE_ID {
+        log::error!("start_io: bad device ID");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-// 	// check args
-// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "StartIO: bad driver reference");
-// 	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "StartIO: bad device ID");
+    let mut device_io = DEVICE_IO.lock().unwrap();
 
-// 	//	we need to hold the state lock
-// 	pthread_mutex_lock(&gDevice_IOMutex);
+    let new_n_clients = if let Some(n_clients) = device_io.n_active_clients {
+        // we have already started io, just increment the counter
+        if let Some(n) = n_clients.checked_add(1) {
+            n
+        } else {
+            // That would be a bit too many clients innit
+            return kAudioHardwareIllegalOperationError as OSStatus;
+        }
+    } else {
+        device_io.current_host_timestamp = mach_absolute_time();
+        device_io.current_frame_timestamp = 0;
+        num::NonZeroU32::MIN
+    };
 
-// 	//	figure out what we need to do
-// 	if(gDevice_IOIsRunning == UINT32_MAX) {
-// 		//	overflowing is an error
-// 		return kAudioHardwareIllegalOperationError;
-// 	} else if(gDevice_IOIsRunning == 0) {
-// 		//	We need to start the hardware, which in this case is just anchoring the time line.
-// 		gDevice_IOIsRunning = 1;
-// 		gDevice_NumberTimeStamps = 0;
-// 		gDevice_AnchorSampleTime = 0;
-// 		gDevice_AnchorHostTime = mach_absolute_time();
-// 	} else {
-// 		//	IO is already running, so just bump the counter
-// 		++gDevice_IOIsRunning;
-// 	}
+    device_io.n_active_clients = Some(new_n_clients);
 
-// 	//	unlock the state lock
-// 	pthread_mutex_unlock(&gDevice_IOMutex);
+	return kAudioHardwareNoError as OSStatus;
+}
 
-// 	return kAudioHardwareNoError;
-// }
+unsafe extern "C" fn stop_io(
+	driver: AudioServerPlugInDriverRef,
+	device_id: AudioObjectID,
+    _client_id: UInt32,
+) -> OSStatus {
+	log::debug!("StopIO");
 
-// static OSStatus	StopIO(
-// 	AudioServerPlugInDriverRef const inDriver,
-// 	AudioObjectID const inDeviceObjectID,
-// 	UInt32 const inClientID
-// ) {
-// 	DebugMsg("StopIO");
+	//	This call tells the device that the client has stopped IO. The driver can stop the hardware
+	//	once all clients have stopped.
 
-// 	//	This call tells the device that the client has stopped IO. The driver can stop the hardware
-// 	//	once all clients have stopped.
+    // check args
+    if !eq_driver_ptr(driver.cast()) {
+        log::error!("stop_io: bad driver reference");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-// 	#pragma unused(inClientID)
+    if device_id != DEVICE_ID {
+        log::error!("stop_io: bad device ID");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-// 	// check args
-// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "StopIO: bad driver reference");
-// 	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "StopIO: bad device ID");
+    let n_active_clients = &mut DEVICE_IO.lock().unwrap().n_active_clients;
 
-// 	//	we need to hold the state lock
-// 	pthread_mutex_lock(&gDevice_IOMutex);
+    let Some(n_clients) = n_active_clients else {
+        // a client has stopped io while we think there are, in fact, none doing io, error out
+        return kAudioHardwareIllegalOperationError as OSStatus;
+    };
 
-// 	//	figure out what we need to do
-// 	if(gDevice_IOIsRunning == 0) {
-// 		//	underflowing is an error
-// 		return kAudioHardwareIllegalOperationError;
-// 	} else if(gDevice_IOIsRunning == 1) {
-// 		//	We need to stop the hardware, which in this case means that there's nothing to do.
-// 		gDevice_IOIsRunning = 0;
-// 	} else {
-// 		//	IO is still running, so just bump the counter
-// 		--gDevice_IOIsRunning;
-// 	}
+    // no checked_sub for nonzeros? me very sad
+    if let Some(new_n_clients) = num::NonZeroU32::new(n_clients.get().strict_sub(1)) {
+        *n_clients = new_n_clients;
+    } else {
+        // we are the last client, here is where we would stop the hardware
+        // but in our case that doesn't mean anything
+        *n_active_clients = None;
+    }
 
-// 	//	unlock the state lock
-// 	pthread_mutex_unlock(&gDevice_IOMutex);
+	return kAudioHardwareNoError as OSStatus;
+}
 
-// 	return kAudioHardwareNoError;
-// }
+unsafe extern "C" fn get_zero_timestamp(
+	driver: AudioServerPlugInDriverRef,
+	device_id: AudioObjectID,
+	_client_id: UInt32,
+	sample_time: *mut Float64,
+	host_time: *mut UInt64,
+	seed: *mut UInt64,
+) -> OSStatus {
 
-// static OSStatus	GetZeroTimeStamp(
-// 	AudioServerPlugInDriverRef const inDriver,
-// 	AudioObjectID const inDeviceObjectID,
-// 	UInt32 const inClientID,
-// 	Float64* const outSampleTime,
-// 	UInt64* const outHostTime,
-// 	UInt64* const outSeed
-// ) {
-// 	DebugMsg("GetZeroTimeStamp");
+	//	This method returns the current zero time stamp for the device. The HAL models the timing of
+	//	a device as a series of time stamps that relate the sample time to a host time. The zero
+	//	time stamps are spaced such that the sample times are the value of
+	//	kAudioDevicePropertyZeroTimeStampPeriod apart. This is often modeled using a ring buffer
+	//	where the zero time stamp is updated when wrapping around the ring buffer.
+	//
+	//	For this device, the zero time stamps' sample time increments every kDevice_RingBufferSize
+	//	frames and the host time increments by kDevice_RingBufferSize * gDevice_HostTicksPerFrame.
 
-// 	//	This method returns the current zero time stamp for the device. The HAL models the timing of
-// 	//	a device as a series of time stamps that relate the sample time to a host time. The zero
-// 	//	time stamps are spaced such that the sample times are the value of
-// 	//	kAudioDevicePropertyZeroTimeStampPeriod apart. This is often modeled using a ring buffer
-// 	//	where the zero time stamp is updated when wrapping around the ring buffer.
-// 	//
-// 	//	For this device, the zero time stamps' sample time increments every kDevice_RingBufferSize
-// 	//	frames and the host time increments by kDevice_RingBufferSize * gDevice_HostTicksPerFrame.
+    // Addendum: this method is how coreaudio determines when/how to apply drift correction.
 
-// 	#pragma unused(inClientID)
+    // check args
+    if !eq_driver_ptr(driver.cast()) {
+        log::error!("get_zero_timestamp: bad driver reference");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-// 	// check args
-// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "GetZeroTimeStamp: bad driver reference");
-// 	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "GetZeroTimeStamp: bad device ID");
+    if device_id != DEVICE_ID {
+        log::error!("get_zero_timestamp: bad device ID");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-// 	//	we need to hold the locks
-// 	pthread_mutex_lock(&gDevice_IOMutex);
+    //	get the current host time
+    let current_time = mach_absolute_time();
+    let n_ticks_per_timestamp = *TICKS_PER_TIMESTAMP;
 
-// 	//	get the current host time
-// 	UInt64 const theCurrentHostTime = mach_absolute_time();
+    let mut device_io = DEVICE_IO.lock().unwrap();
 
-// 	//	calculate the next host time
-// 	Float64 const theHostTicksPerRingBuffer = gDevice_HostTicksPerFrame * ((Float64)kDevice_RingBufferSize);
-// 	Float64 const theHostTickOffset = ((Float64)(gDevice_NumberTimeStamps + 1)) * theHostTicksPerRingBuffer;
-// 	UInt64 const theNextHostTime = gDevice_AnchorHostTime + ((UInt64)theHostTickOffset);
+    let elapsed_time_ticks = current_time.strict_sub(device_io.current_host_timestamp);
+    let n_timestamps_advanced = elapsed_time_ticks / n_ticks_per_timestamp; 
+    device_io.current_host_timestamp = device_io.current_host_timestamp.strict_add(n_ticks_per_timestamp.get().strict_mul(n_timestamps_advanced));
+    device_io.current_frame_timestamp = device_io.current_frame_timestamp.strict_add(u64::from(FRAMES_PER_TIMESTAMP).strict_mul(n_timestamps_advanced));
+    
+	//	set the return values
+	unsafe { sample_time.write(device_io.current_frame_timestamp as f64) };
+	unsafe { host_time.write(device_io.current_host_timestamp) };
+	unsafe { seed.write(1) };
 
-// 	//	go to the next time if the next host time is less than the current time
-// 	if(theNextHostTime <= theCurrentHostTime) ++gDevice_NumberTimeStamps;
+	kAudioHardwareNoError as OSStatus
+}
 
-// 	//	set the return values
-// 	*outSampleTime = gDevice_NumberTimeStamps * kDevice_RingBufferSize;
-// 	*outHostTime = gDevice_AnchorHostTime + (((Float64)gDevice_NumberTimeStamps) * theHostTicksPerRingBuffer);
-// 	*outSeed = 1;
+unsafe extern "C" fn will_do_io_operation(
+	driver: AudioServerPlugInDriverRef,
+	device_id: AudioObjectID,
+	_client_id: UInt32,
+	operation_id: UInt32,
+	will_do: *mut Boolean,
+	will_do_in_place: *mut Boolean,
+) -> OSStatus {
+	//	This method returns whether or not the device will do a given IO operation. For this device,
+	//	we only support reading input data and writing output data.
 
-// 	//	unlock the state lock
-// 	pthread_mutex_unlock(&gDevice_IOMutex);
+    // check args
+    if !eq_driver_ptr(driver.cast()) {
+        log::error!("will_do_io_operation: bad driver reference");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-// 	return kAudioHardwareNoError;
-// }
+    if device_id != DEVICE_ID {
+        log::error!("will_do_io_operation: bad device ID");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-// static OSStatus	WillDoIOOperation(
-// 	AudioServerPlugInDriverRef const inDriver,
-// 	AudioObjectID const inDeviceObjectID,
-// 	UInt32 const inClientID,
-// 	UInt32 const inOperationID,
-// 	Boolean* const outWillDo,
-// 	Boolean* const outWillDoInPlace
-// ) {
-// 	DebugMsg("WillDoIOOperation");
+	//	figure out if we support the operation
+	let mut will = false;
+	let mut will_in_place = true;
 
-// 	//	This method returns whether or not the device will do a given IO operation. For this device,
-// 	//	we only support reading input data and writing output data.
+	if operation_id == kAudioServerPlugInIOOperationWriteMix {
+		will = true;
+		will_in_place = true;
+	}
 
-// 	#pragma unused(inClientID)
+    if let Some(will_do) = NonNull::new(will_do) {
+        unsafe { will_do.write(Boolean::from(will)) };
+    }
+    
+    if let Some(will_do_in_place) = NonNull::new(will_do_in_place) {
+        unsafe { will_do_in_place.write(Boolean::from(will_in_place)) };
+    }
 
-// 	// check args
-// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "WillDoIOOperation: bad driver reference");
-// 	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "WillDoIOOperation: bad device ID");
+	kAudioHardwareNoError as OSStatus
+}
 
-// 	//	figure out if we support the operation
-// 	bool willDo = false;
-// 	bool willDoInPlace = true;
+unsafe extern "C" fn begin_io_operation(
+	driver: AudioServerPlugInDriverRef,
+	device_id: AudioObjectID,
+	_client_id: UInt32,
+	_operation_id: UInt32,
+	_io_buffer_frame_size: UInt32,
+    _io_cycle_info: *const AudioServerPlugInIOCycleInfo,
+) -> OSStatus {
+	// This is called at the beginning of an IO operation. This device doesn't do anything, so just
+	// check args and return.
 
-// 	if (inOperationID == kAudioServerPlugInIOOperationWriteMix) {
-// 		willDo = true;
-// 		willDoInPlace = true;
-// 	}
+    // check args
+    if !eq_driver_ptr(driver.cast()) {
+        log::error!("begin_io_operation: bad driver reference");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-// 	//	fill out the return values
-// 	if(outWillDo != NULL) *outWillDo = willDo;
-// 	if(outWillDoInPlace != NULL) *outWillDoInPlace = willDoInPlace;
-// 	return kAudioHardwareNoError;
-// }
+    if device_id != DEVICE_ID {
+        log::error!("begin_io_operation: bad device ID");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-// static OSStatus	BeginIOOperation(
-// 	AudioServerPlugInDriverRef const inDriver,
-// 	AudioObjectID const inDeviceObjectID,
-// 	UInt32 const inClientID,
-// 	UInt32 const inOperationID,
-// 	UInt32 const inIOBufferFrameSize,
-// 	AudioServerPlugInIOCycleInfo const* const inIOCycleInfo
-// ) {
-// 	//This is called at the beginning of an IO operation. This device doesn't do anything, so just
-// 	// check args and return.
+	kAudioHardwareNoError as OSStatus
+}
 
-// 	DebugMsg("BeginIOOperation");
+unsafe extern "C" fn do_io_operation(
+	driver: AudioServerPlugInDriverRef,
+	device_id: AudioObjectID,
+    stream_id: AudioObjectID,
+	_client_id: UInt32,
+	operation_id: UInt32,
+	_io_buffer_frame_size: UInt32,
+    _io_cycle_info: *const AudioServerPlugInIOCycleInfo,
+	_io_main_buffer: *mut std::os::raw::c_void,
+	_io_secondary_buffer: *mut std::os::raw::c_void,
+) -> OSStatus {
+	//	This is called to actually perform a given operation. For this device, all we need to do is
+	//	clear the buffer for the ReadInput operation.
 
-// 	#pragma unused(inClientID, inOperationID, inIOBufferFrameSize, inIOCycleInfo)
+	// check args
+    if !eq_driver_ptr(driver.cast()) {
+        log::error!("do_io_operation: bad driver reference");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-// 	// check args
-// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "BeginIOOperation: bad driver reference");
-// 	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "BeginIOOperation: bad device ID");
+    if device_id != DEVICE_ID {
+        log::error!("do_io_operation: bad device ID");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-// 	return kAudioHardwareNoError;
-// }
+    if stream_id != STREAM_ID {
+        log::error!("do_io_operation: bad stream ID");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-// static OSStatus	DoIOOperation(
-// 	AudioServerPlugInDriverRef const inDriver,
-// 	AudioObjectID const inDeviceObjectID,
-// 	AudioObjectID const inStreamObjectID,
-// 	UInt32 const inClientID,
-// 	UInt32 const inOperationID,
-// 	UInt32 const inIOBufferFrameSize,
-// 	AudioServerPlugInIOCycleInfo const* const inIOCycleInfo,
-// 	void* const ioMainBuffer,
-// 	void* const ioSecondaryBuffer
-// ) {
-// 	//	This is called to actually perform a given operation. For this device, all we need to do is
-// 	//	clear the buffer for the ReadInput operation.
+	if operation_id == kAudioServerPlugInIOOperationWriteMix {}
 
-// 	DebugMsg("DoIOOperation");
+	kAudioHardwareNoError as OSStatus
+}
 
-// 	#pragma unused(inClientID, inIOCycleInfo, ioSecondaryBuffer)
+unsafe extern "C" fn end_io_operation(
+	driver: AudioServerPlugInDriverRef,
+	device_id: AudioObjectID,
+	_client_id: UInt32,
+	_operation_id: UInt32,
+	_io_buffer_frame_size: UInt32,
+    _io_cycle_info: *const AudioServerPlugInIOCycleInfo,
+) -> OSStatus {
+	// This is called at the beginning of an IO operation. This device doesn't do anything, so just
+	// check args and return.
 
-// 	// check args
-// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "DoIOOperation: bad driver reference");
-// 	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "DoIOOperation: bad device ID");
-// 	DoIfFailed(inStreamObjectID != STREAM_ID, return kAudioHardwareBadObjectError, "DoIOOperation: bad stream ID");
+    // check args
+    if !eq_driver_ptr(driver.cast()) {
+        log::error!("end_io_operation: bad driver reference");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-// 	if(inOperationID == kAudioServerPlugInIOOperationWriteMix) {}
+    if device_id != DEVICE_ID {
+        log::error!("end_io_operation: bad device ID");
+        return kAudioHardwareBadObjectError as OSStatus;
+    }
 
-// 	return kAudioHardwareNoError;
-// }
-
-// static OSStatus	EndIOOperation(
-// 	AudioServerPlugInDriverRef const inDriver,
-// 	AudioObjectID const inDeviceObjectID,
-// 	UInt32 const inClientID,
-// 	UInt32 const inOperationID,
-// 	UInt32 const inIOBufferFrameSize,
-// 	AudioServerPlugInIOCycleInfo const* const inIOCycleInfo
-// ) {
-// 	//	This is called at the end of an IO operation. This device doesn't do anything, so just check
-// 	//	the arguments and return.
-// 	DebugMsg("EndIOOperation");
-
-// 	#pragma unused(inClientID, inOperationID, inIOBufferFrameSize, inIOCycleInfo)
-
-// 	// check args
-// 	DoIfFailed(inDriver != DRIVER_REF, return kAudioHardwareBadObjectError, "EndIOOperation: bad driver reference");
-// 	DoIfFailed(inDeviceObjectID != DEVICE_ID, return kAudioHardwareBadObjectError, "EndIOOperation: bad device ID");
-
-// 	return kAudioHardwareNoError;
-// }
+	kAudioHardwareNoError as OSStatus
+}
