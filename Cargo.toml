@@ -3,10 +3,14 @@ name = "syfala_coreaudio"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+
+crate-type = ["cdylib"]
+
 [dependencies]
 
-coreaudio-sys = "0.2.17"
-oslog = { version = "0.2.0", features = ["logger"] }
-atomic_float = "1.1.0"
-atomic_refcell = "0.1.13"
-log = { version = "0.4.29", features = ["std"] }
+coreaudio-sys = "0.2"
+oslog = { version = "0.2", features = ["logger"] }
+atomic_float = "1"
+atomic_refcell = "0.1"
+log = { version = "0.4", features = ["std"] }

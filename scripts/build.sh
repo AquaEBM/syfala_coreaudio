@@ -1,11 +1,5 @@
-
-DRIVER_SRC_PATH=$1
-CARGO_PROJECT_PATH=$2
-TEAM_ID=$3
-OUT_DIR=$4
-
+NAME="syfala_coreaudio"
 LIBRARY_PATH=$1
-NAME="SyFaLa"
 # replace with your own signature
 TEAM_ID="8SHPR83B3J"
 
@@ -13,9 +7,9 @@ TEAM_ID="8SHPR83B3J"
 # you can also use uuidgen
 FACTORY_UUID=67FDAB5A-2429-478E-B0CE-61F1C23A03C6
 
-mkdir -p target/$NAME.driver/Contents/{MacOS,Resources}
+mkdir -p $NAME.driver/Contents/{MacOS,Resources}
 
-cat > "target/$NAME.driver/Contents/Info.plist" <<EOF
+cat > "$NAME.driver/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -32,8 +26,6 @@ cat > "target/$NAME.driver/Contents/Info.plist" <<EOF
     <string>$NAME</string>
     <key>CFBundlePackageType</key>
     <string>BNDL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.0.1</string>
   <key>CFBundleSupportedPlatforms</key>
     <array>
         <string>MacOSX</string>
@@ -43,7 +35,7 @@ cat > "target/$NAME.driver/Contents/Info.plist" <<EOF
   <key>CFPlugInFactories</key>
     <dict>
         <key>$FACTORY_UUID</key>
-        <string>syfala_create</string>
+        <string>create</string>
     </dict>
     <key>CFPlugInTypes</key>
     <dict>
@@ -56,8 +48,16 @@ cat > "target/$NAME.driver/Contents/Info.plist" <<EOF
 </plist>
 EOF
 
-codesign --force --deep --options runtime --sign "$TEAM_ID" "target/$NAME.driver"
+cp $LIBRARY_PATH $NAME
+mv $NAME $NAME.driver/Contents/MacOS
 
-sudo cp -rf "target/$NAME.driver" "/Library/Audio/Plug-Ins/HAL"
+codesign --force --deep --options runtime --sign "$TEAM_ID" "$NAME.driver"
+
+DEST_DIR="/Library/Audio/Plug-Ins/HAL"
+
+sudo rm -rf "$DEST_DIR/$NAME.driver"
+sudo mv $NAME.driver "$DEST_DIR/"
+
+rm -rf $NAME.driver
 
 sudo killall -9 coreaudiod
