@@ -1,0 +1,1 @@
+log stream --style compact --predicate 'subsystem = "com.emeraude.syfala_coreaudio"'

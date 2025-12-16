@@ -58,6 +58,4 @@ DEST_DIR="/Library/Audio/Plug-Ins/HAL"
 sudo rm -rf "$DEST_DIR/$NAME.driver"
 sudo mv $NAME.driver "$DEST_DIR/"
 
-rm -rf $NAME.driver
-
 sudo killall -9 coreaudiod

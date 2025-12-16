@@ -264,7 +264,7 @@ static _Atomic(bool)                        OUTPUT_MUTE[N_CHANNELS + 1]     = {}
 // This is the only function exposed by the library, It's name must be indicated in the CFPlugInFactories field
 // the bundle's Info.plist file
 
-void* syfala_create(
+void* create(
 	CFAllocatorRef const inAllocator,
 	CFUUIDRef const inRequestedTypeUUID
 ) {
@@ -291,7 +291,6 @@ void* syfala_create(
     if(CFEqual(inRequestedTypeUUID, kAudioServerPlugInTypeUUID)) {
 		DebugMsg("HAL Plug-In Interface Requested");
 		theAnswer = DRIVER_REF;
-		
     }
     return theAnswer;
 }
